@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, afterEach } from "vitest";
-import { createMemoryStore } from "./memory/index.js";
+import { createTestStore } from "./memory/index.js";
 import { createHeartbeat, createPlanActHeartbeat } from "./core/heartbeat.js";
 import { createScheduler } from "./core/scheduler.js";
 import { createTimerAdapter } from "./timer/index.js";
@@ -11,7 +11,7 @@ afterEach(() => {
 
 describe("E2E: single-loop heartbeat with scheduler", () => {
   test("multi-tick lifecycle: create goal → act → complete goal → cadence adjusts", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("tenant-1", { enabled: true, actionsRequireApproval: false });
 
     const sideEffects: string[] = [];
@@ -99,7 +99,7 @@ describe("E2E: single-loop heartbeat with scheduler", () => {
   });
 
   test("governance hard cap enforced across actions in a tick", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("t1", { enabled: true, actionsRequireApproval: false });
 
     const results: DispatchResult[] = [];
@@ -134,7 +134,7 @@ describe("E2E: single-loop heartbeat with scheduler", () => {
 
   test("scheduler start → triggerNow → reschedule cycle", async () => {
     vi.useFakeTimers();
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
     let ticksFired = 0;
@@ -185,7 +185,7 @@ describe("E2E: single-loop heartbeat with scheduler", () => {
   });
 
   test("seedFromStore recovers scheduled entities after restart", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     const futureTime = new Date(Date.now() + 5_000);
     await store.upsertState("e1", {
       enabled: true,
@@ -227,7 +227,7 @@ describe("E2E: single-loop heartbeat with scheduler", () => {
   });
 
   test("idempotency prevents duplicate side effects within a tick", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
     let performCount = 0;
@@ -263,7 +263,7 @@ describe("E2E: single-loop heartbeat with scheduler", () => {
   });
 
   test("failed tick still returns valid result for rescheduling", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
     const heartbeat = createHeartbeat({
@@ -287,7 +287,7 @@ describe("E2E: single-loop heartbeat with scheduler", () => {
 
 describe("E2E: plan/act heartbeat", () => {
   test("planner creates goals, executor works them, cross-goal governance shared", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("org-1", { enabled: true, actionsRequireApproval: false });
 
     const sideEffects: string[] = [];
@@ -360,7 +360,7 @@ describe("E2E: plan/act heartbeat", () => {
   });
 
   test("per-tick cap shared across executor passes", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("org-1", { enabled: true, actionsRequireApproval: false });
 
     // Seed goals
@@ -410,7 +410,7 @@ describe("E2E: plan/act heartbeat", () => {
 
 describe("E2E: delta-aware briefing", () => {
   test("briefing source receives correct delta cutoff across ticks", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
     const cutoffs: (Date | null)[] = [];

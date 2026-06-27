@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, afterEach } from "vitest";
 import { createScheduler } from "./scheduler.js";
 import { createTimerAdapter } from "../timer/index.js";
-import { createMemoryStore } from "../memory/index.js";
+import { createTestStore } from "../memory/index.js";
 import type { TickResult } from "./types.js";
 
 const makeCadenceConfig = () => ({
@@ -16,7 +16,7 @@ describe("createScheduler", () => {
   });
 
   test("start enqueues a job via the adapter", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     const adapter = createTimerAdapter();
     const onTick = vi.fn(async (): Promise<TickResult> => ({
       tickId: "t1", status: "completed", goalsWorkedCount: 0, actionsTakenCount: 0, nextCadenceMs: 1_000,
@@ -38,7 +38,7 @@ describe("createScheduler", () => {
   });
 
   test("stop removes the scheduled job", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     const adapter = createTimerAdapter();
 
     const scheduler = createScheduler({
@@ -58,7 +58,7 @@ describe("createScheduler", () => {
   });
 
   test("triggerNow fires onTick immediately and reschedules", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     const adapter = createTimerAdapter();
     const onTick = vi.fn(async (): Promise<TickResult> => ({
       tickId: "t1", status: "completed", goalsWorkedCount: 0, actionsTakenCount: 0, nextCadenceMs: 5_000,
@@ -82,7 +82,7 @@ describe("createScheduler", () => {
   });
 
   test("seedFromStore re-enqueues entities with scheduled ticks", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     const adapter = createTimerAdapter();
 
     const scheduler = createScheduler({

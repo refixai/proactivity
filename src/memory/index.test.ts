@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { createMemoryStore } from "./index.js";
+import { createTestStore } from "./index.js";
 import type {
   GoalMutation,
   GoalRecord,
@@ -7,11 +7,11 @@ import type {
 } from "../core/types.js";
 
 const makeStore = () => {
-  const store = createMemoryStore();
+  const store = createTestStore();
   return store;
 };
 
-describe("createMemoryStore", () => {
+describe("createTestStore", () => {
   // --- Entity State ---
 
   test("upsertState creates and updates entity", async () => {
