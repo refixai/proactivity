@@ -1,6 +1,6 @@
 import { describe, test, expect, vi } from "vitest";
 import { createHeartbeat, createPlanActHeartbeat } from "./heartbeat.js";
-import { createMemoryStore } from "../memory/index.js";
+import { createTestStore } from "../memory/index.js";
 import type {
   HeartbeatConfig,
   PlanActConfig,
@@ -8,7 +8,7 @@ import type {
   GovernanceConfig,
 } from "./types.js";
 
-const makeGovernanceConfig = (store: ReturnType<typeof createMemoryStore>): GovernanceConfig => ({
+const makeGovernanceConfig = (store: ReturnType<typeof createTestStore>): GovernanceConfig => ({
   store,
   caps: { perPass: 3, perTick: 5 },
 });
@@ -21,7 +21,7 @@ const makeCadenceConfig = () => ({
 
 describe("createHeartbeat", () => {
   test("full tick lifecycle: briefing → callback → result", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
     const tickFn = vi.fn(async (ctx: TickContext) => {
@@ -52,7 +52,7 @@ describe("createHeartbeat", () => {
   });
 
   test("governance dispatch works inside tick callback", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
     const performed = vi.fn();
 
@@ -81,7 +81,7 @@ describe("createHeartbeat", () => {
   });
 
   test("tick number increments across runs", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
     const tickNumbers: number[] = [];
@@ -103,7 +103,7 @@ describe("createHeartbeat", () => {
   });
 
   test("delta cutoff uses previous tick startedAt", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
     let firstTickStartedAt: Date | undefined;
@@ -131,7 +131,7 @@ describe("createHeartbeat", () => {
   });
 
   test("cadence hint null defaults to config.default", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
     const heartbeat = createHeartbeat({
@@ -147,7 +147,7 @@ describe("createHeartbeat", () => {
   });
 
   test("tick callback error results in failed tick", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
     const heartbeat = createHeartbeat({
@@ -170,7 +170,7 @@ describe("createHeartbeat", () => {
   });
 
   test("dry run mode passes through to governance", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
     const performed = vi.fn();
 
@@ -198,7 +198,7 @@ describe("createHeartbeat", () => {
   });
 
   test("soft cap denies action without override", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
     const performed = vi.fn();
 
@@ -233,7 +233,7 @@ describe("createHeartbeat", () => {
   });
 
   test("soft cap allows action with override reason", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
     const performed = vi.fn();
 
@@ -268,7 +268,7 @@ describe("createHeartbeat", () => {
   });
 
   test("entityCreatedAt provides delta cutoff for first tick", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
     const entityCreated = new Date("2025-01-01");
 
@@ -292,7 +292,7 @@ describe("createHeartbeat", () => {
 
 describe("createPlanActHeartbeat", () => {
   test("planner then executor lifecycle", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
     const tickId = await store.insertTick({ entityId: "e1", tickNumber: 0, trigger: "manual", dryRun: false });
@@ -336,7 +336,7 @@ describe("createPlanActHeartbeat", () => {
   });
 
   test("executor crash does not abort tick", async () => {
-    const store = createMemoryStore();
+    const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
     const tickId = await store.insertTick({ entityId: "e1", tickNumber: 0, trigger: "manual", dryRun: false });

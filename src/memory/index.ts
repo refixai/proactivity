@@ -12,7 +12,7 @@ import type {
   TickRecord,
 } from "../core/types.js";
 
-export const createMemoryStore = (): ProactivityStore => {
+export const createTestStore = (): ProactivityStore => {
   let counter = 0;
   const id = () => `mem_${++counter}`;
   const entities = new Map<string, EntityState>();

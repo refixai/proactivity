@@ -16,10 +16,6 @@
       "types": "./dist/bullmq/index.d.ts",
       "import": "./dist/bullmq/index.js"
     },
-    "./memory": {
-      "types": "./dist/memory/index.d.ts",
-      "import": "./dist/memory/index.js"
-    },
     "./timer": {
       "types": "./dist/timer/index.d.ts",
       "import": "./dist/timer/index.js"
