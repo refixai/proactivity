@@ -30,9 +30,8 @@ describe("createTestStore", () => {
 
   test("insertTick and getLatestTick round-trip", async () => {
     const store = makeStore();
-    const tickId = await store.insertTick({
+    const { tickId } = await store.insertTick({
       entityId: "e1",
-      tickNumber: 1,
       trigger: "manual",
       dryRun: false,
     });
@@ -42,16 +41,14 @@ describe("createTestStore", () => {
     expect(latest).toMatchObject({
       id: tickId,
       entityId: "e1",
-      tickNumber: 1,
       status: "running",
     });
   });
 
   test("updateTick patches tick fields", async () => {
     const store = makeStore();
-    const tickId = await store.insertTick({
+    const { tickId } = await store.insertTick({
       entityId: "e1",
-      tickNumber: 1,
       trigger: "scheduled",
       dryRun: false,
     });
@@ -71,8 +68,8 @@ describe("createTestStore", () => {
 
   test("getPreviousTickStartedAt returns prior tick time", async () => {
     const store = makeStore();
-    await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
-    await store.insertTick({ entityId: "e1", tickNumber: 2, trigger: "scheduled", dryRun: false });
+    await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
+    await store.insertTick({ entityId: "e1", trigger: "scheduled", dryRun: false });
 
     const prev = await store.getPreviousTickStartedAt("e1", 2);
     expect(prev).toBeInstanceOf(Date);
@@ -85,7 +82,7 @@ describe("createTestStore", () => {
 
   test("applyGoalMutations creates goals", async () => {
     const store = makeStore();
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     const mutations: GoalMutation[] = [
       {
@@ -107,7 +104,7 @@ describe("createTestStore", () => {
 
   test("applyGoalMutations updates, completes, archives goals", async () => {
     const store = makeStore();
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     await store.applyGoalMutations(tickId, [
       {
@@ -141,7 +138,7 @@ describe("createTestStore", () => {
 
   test("listGoals filters by status", async () => {
     const store = makeStore();
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     await store.applyGoalMutations(tickId, [
       { op: "create", title: "Active goal", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
@@ -162,7 +159,7 @@ describe("createTestStore", () => {
 
   test("insertGoalTick and updateGoalTick round-trip", async () => {
     const store = makeStore();
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     await store.applyGoalMutations(tickId, [
       { op: "create", title: "G", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
@@ -231,7 +228,7 @@ describe("createTestStore", () => {
   test("getRecentAttempts returns attempts within tick window", async () => {
     const store = makeStore();
 
-    const t1 = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId: t1 } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     await store.insertAttempt({
       goalId: "g1", tickId: t1, goalTickId: "gt1",
       actionType: "a", idempotencyKey: "k1",
@@ -240,7 +237,7 @@ describe("createTestStore", () => {
       target: {}, payload: null,
     });
 
-    const t2 = await store.insertTick({ entityId: "e1", tickNumber: 2, trigger: "scheduled", dryRun: false });
+    const { tickId: t2 } = await store.insertTick({ entityId: "e1", trigger: "scheduled", dryRun: false });
     await store.insertAttempt({
       goalId: "g1", tickId: t2, goalTickId: "gt2",
       actionType: "b", idempotencyKey: "k2",

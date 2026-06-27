@@ -56,9 +56,8 @@ describe("createPostgresStore", () => {
     const store = makeStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
-    const tickId = await store.insertTick({
+    const { tickId } = await store.insertTick({
       entityId: "e1",
-      tickNumber: 1,
       trigger: "manual",
       dryRun: false,
     });
@@ -68,7 +67,6 @@ describe("createPostgresStore", () => {
     expect(latest).toMatchObject({
       id: tickId,
       entityId: "e1",
-      tickNumber: 1,
       status: "running",
     });
   });
@@ -77,9 +75,8 @@ describe("createPostgresStore", () => {
     const store = makeStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
-    const tickId = await store.insertTick({
+    const { tickId } = await store.insertTick({
       entityId: "e1",
-      tickNumber: 1,
       trigger: "scheduled",
       dryRun: false,
     });
@@ -101,8 +98,8 @@ describe("createPostgresStore", () => {
     const store = makeStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
-    await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
-    await store.insertTick({ entityId: "e1", tickNumber: 2, trigger: "scheduled", dryRun: false });
+    await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
+    await store.insertTick({ entityId: "e1", trigger: "scheduled", dryRun: false });
 
     const prev = await store.getPreviousTickStartedAt("e1", 2);
     expect(prev).toBeInstanceOf(Date);
@@ -116,7 +113,7 @@ describe("createPostgresStore", () => {
   test("applyGoalMutations creates goals", async () => {
     const store = makeStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     const mutations: GoalMutation[] = [
       {
@@ -139,7 +136,7 @@ describe("createPostgresStore", () => {
   test("applyGoalMutations updates, completes, archives goals", async () => {
     const store = makeStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     await store.applyGoalMutations(tickId, [
       { op: "create", title: "Test goal", objective: "obj", doneCondition: "done", findings: "", reasoning: "test" },
@@ -166,7 +163,7 @@ describe("createPostgresStore", () => {
   test("listGoals filters by status", async () => {
     const store = makeStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     await store.applyGoalMutations(tickId, [
       { op: "create", title: "Active goal", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
@@ -188,7 +185,7 @@ describe("createPostgresStore", () => {
   test("insertGoalTick and updateGoalTick round-trip", async () => {
     const store = makeStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     await store.applyGoalMutations(tickId, [
       { op: "create", title: "G", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
@@ -206,7 +203,7 @@ describe("createPostgresStore", () => {
   test("insertAttempt and idempotency conflict", async () => {
     const store = makeStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     const { goalId, goalTickId } = await seedGoalAndGoalTick(store, "e1", tickId);
 
     const base: InsertAttempt = {
@@ -233,7 +230,7 @@ describe("createPostgresStore", () => {
   test("markAttemptCompleted and markAttemptFailed", async () => {
     const store = makeStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     const { goalId, goalTickId } = await seedGoalAndGoalTick(store, "e1", tickId);
 
     const r1 = await store.insertAttempt({
@@ -266,7 +263,7 @@ describe("createPostgresStore", () => {
     const store = makeStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
-    const t1 = await store.insertTick({ entityId: "e1", tickNumber: 1, trigger: "manual", dryRun: false });
+    const { tickId: t1 } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     const s1 = await seedGoalAndGoalTick(store, "e1", t1);
     await store.insertAttempt({
       goalId: s1.goalId, tickId: t1, goalTickId: s1.goalTickId,
@@ -276,7 +273,7 @@ describe("createPostgresStore", () => {
       target: {}, payload: null,
     });
 
-    const t2 = await store.insertTick({ entityId: "e1", tickNumber: 2, trigger: "scheduled", dryRun: false });
+    const { tickId: t2 } = await store.insertTick({ entityId: "e1", trigger: "scheduled", dryRun: false });
     const s2 = await seedGoalAndGoalTick(store, "e1", t2);
     await store.insertAttempt({
       goalId: s2.goalId, tickId: t2, goalTickId: s2.goalTickId,

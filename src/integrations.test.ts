@@ -2,7 +2,7 @@ import { describe, test, expect, vi } from "vitest";
 import { createTestStore } from "./memory/index.js";
 import { createHeartbeat } from "./core/heartbeat.js";
 import { buildTickPrompt } from "./prompts/index.js";
-import type { GovernanceHandle, DispatchResult } from "./core/types.js";
+import type { GovernanceHandle, DispatchResult, ProactivityStore } from "./core/types.js";
 
 const makeHeartbeat = (tickFn: Parameters<typeof createHeartbeat>[0]["tick"]) => {
   const store = createTestStore();
@@ -15,22 +15,25 @@ const makeHeartbeat = (tickFn: Parameters<typeof createHeartbeat>[0]["tick"]) =>
   })};
 };
 
-// Simulates a framework tool call → governance.dispatch inside the tick callback.
-// Each pattern tests: prompt builds, governance wraps tool execution, result flows back.
+const seedGoalAndGoalTick = async (store: ProactivityStore, tickId: string, goalId: string) => {
+  await store.applyGoalMutations(tickId, [
+    { op: "create", goalId, title: "Test goal", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
+  ]);
+  const goalTickId = await store.insertGoalTick({ goalId, tickId, orderIndex: 0 });
+  return goalTickId;
+};
 
 describe("integration patterns", () => {
 
   test("LangGraph pattern: governed tools bound at graph build time", async () => {
-    // LangGraph binds tools at build time. The tool's func calls governance.dispatch.
-    // Simulate: build governed tool → invoke it inside tick → verify dispatch result.
     const performed: string[] = [];
 
-    const makeGovernedTool = (governance: GovernanceHandle) => ({
+    const makeGovernedTool = (governance: GovernanceHandle, goalId: string, goalTickId: string) => ({
       name: "send_email",
       func: async (args: { userId: string; body: string }) => {
         const result = await governance.dispatch({
-          goalId: "g1",
-          goalTickId: "gt1",
+          goalId,
+          goalTickId,
           actionType: "send_email",
           target: { userId: args.userId },
           reasoning: `Email to ${args.userId}`,
@@ -50,8 +53,8 @@ describe("integration patterns", () => {
       expect(typeof prompt).toBe("string");
       expect(prompt).toContain("crm");
 
-      // Simulate LangGraph tool node invoking the governed tool
-      const tool = makeGovernedTool(ctx.governance);
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-lang");
+      const tool = makeGovernedTool(ctx.governance, "g-lang", goalTickId);
       const outcome = await tool.func({ userId: "u1", body: "hello" });
       expect(outcome).toBe("taken");
 
@@ -67,10 +70,8 @@ describe("integration patterns", () => {
   });
 
   test("Anthropic/OpenAI pattern: parse response → dispatch in loop", async () => {
-    // Consumer calls LLM, parses structured response, dispatches each action.
     const performed: string[] = [];
 
-    // Simulate LLM response (parsed JSON from model output)
     const simulatedLlmResponse = {
       actions: [
         { actionType: "send_slack", target: { channel: "#general" }, reasoning: "alert team" },
@@ -88,12 +89,13 @@ describe("integration patterns", () => {
       });
       expect(prompt.length).toBeGreaterThan(100);
 
-      // Simulate: call LLM → parse → dispatch loop
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-anthropic");
+
       const results: DispatchResult[] = [];
       for (const action of simulatedLlmResponse.actions) {
         const r = await ctx.governance.dispatch({
-          goalId: "g1",
-          goalTickId: "gt1",
+          goalId: "g-anthropic",
+          goalTickId,
           ...action,
           perform: async () => { performed.push(action.actionType); },
         });
@@ -113,22 +115,22 @@ describe("integration patterns", () => {
   });
 
   test("Vercel AI SDK pattern: governed tool() inside generateText", async () => {
-    // Vercel AI SDK uses tool() with execute callback. Governance wraps execute.
     const performed: string[] = [];
 
     const { store, heartbeat } = makeHeartbeat(async (ctx) => {
-      const prompt = buildTickPrompt({
+      buildTickPrompt({
         briefing: ctx.briefing,
         goals: ctx.goals,
         entityId: ctx.boundary.entityId,
         tickNumber: ctx.boundary.tickNumber,
       });
 
-      // Simulate Vercel tool({ execute }) — governance inside execute callback
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-vercel");
+
       const toolExecute = async (args: { userId: string; message: string }) => {
         const result = await ctx.governance.dispatch({
-          goalId: "g1",
-          goalTickId: "gt1",
+          goalId: "g-vercel",
+          goalTickId,
           actionType: "send_notification",
           target: { userId: args.userId },
           reasoning: `Notify ${args.userId}`,
@@ -137,7 +139,6 @@ describe("integration patterns", () => {
         return result.governanceOutcome;
       };
 
-      // Simulate generateText calling the tool across multiple steps
       const outcome1 = await toolExecute({ userId: "u1", message: "hi" });
       const outcome2 = await toolExecute({ userId: "u2", message: "hey" });
       expect(outcome1).toBe("taken");
@@ -154,8 +155,6 @@ describe("integration patterns", () => {
   });
 
   test("Mastra pattern: agent.generate with governed actions post-parse", async () => {
-    // Mastra: create Agent, call agent.generate, parse, dispatch.
-    // Same as Anthropic/OpenAI but agent is instantiated per tick.
     const performed: string[] = [];
 
     const { store, heartbeat } = makeHeartbeat(async (ctx) => {
@@ -167,14 +166,14 @@ describe("integration patterns", () => {
         extra: "You are a Mastra agent. Focus on CRM signals.",
       });
 
-      // Verify extra field injects into prompt
       expect(prompt).toContain("Mastra agent");
       expect(prompt).toContain("Additional instructions");
 
-      // Simulate agent.generate → parse → dispatch
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-mastra");
+
       const r = await ctx.governance.dispatch({
-        goalId: "g1",
-        goalTickId: "gt1",
+        goalId: "g-mastra",
+        goalTickId,
         actionType: "update_crm",
         target: { leadId: "alice" },
         reasoning: "Update lead status",
@@ -193,16 +192,16 @@ describe("integration patterns", () => {
   });
 
   test("governance caps enforced across framework tool calls", async () => {
-    // Hard cap must stop tools mid-agentic-loop regardless of framework.
     const performed: string[] = [];
 
     const { store, heartbeat } = makeHeartbeat(async (ctx) => {
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-caps");
+
       const results: DispatchResult[] = [];
-      // Simulate an agentic loop calling tools — perPass cap is 3
       for (let i = 0; i < 5; i++) {
         const r = await ctx.governance.dispatch({
-          goalId: "g1",
-          goalTickId: "gt1",
+          goalId: "g-caps",
+          goalTickId,
           actionType: "send_message",
           target: { userId: `u${i}` },
           reasoning: `Message ${i}`,
@@ -227,22 +226,22 @@ describe("integration patterns", () => {
   });
 
   test("idempotency dedup across retried tool calls", async () => {
-    // Framework retries (LangGraph loop, Vercel maxSteps) shouldn't cause duplicate actions.
     const performed: string[] = [];
 
     const { store, heartbeat } = makeHeartbeat(async (ctx) => {
-      // Same action dispatched twice (simulates a retry/re-invocation)
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-idemp");
+
       const r1 = await ctx.governance.dispatch({
-        goalId: "g1",
-        goalTickId: "gt1",
+        goalId: "g-idemp",
+        goalTickId,
         actionType: "send_email",
         target: { userId: "u1" },
         reasoning: "First attempt",
         perform: async () => { performed.push("sent"); },
       });
       const r2 = await ctx.governance.dispatch({
-        goalId: "g1",
-        goalTickId: "gt1",
+        goalId: "g-idemp",
+        goalTickId,
         actionType: "send_email",
         target: { userId: "u1" },
         reasoning: "Retry",
@@ -263,7 +262,6 @@ describe("integration patterns", () => {
   });
 
   test("prompt builder works for all tick states", async () => {
-    // Verify prompts build correctly with various goal/briefing shapes.
     const prompt1 = buildTickPrompt({
       briefing: {},
       goals: [],

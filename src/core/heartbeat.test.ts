@@ -295,7 +295,7 @@ describe("createPlanActHeartbeat", () => {
     const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 0, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     await store.applyGoalMutations(tickId, [
       { op: "create", goalId: "g1", title: "Test", objective: "obj", doneCondition: "done", findings: "", reasoning: "seed" },
     ]);
@@ -339,7 +339,7 @@ describe("createPlanActHeartbeat", () => {
     const store = createTestStore();
     await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
 
-    const tickId = await store.insertTick({ entityId: "e1", tickNumber: 0, trigger: "manual", dryRun: false });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     await store.applyGoalMutations(tickId, [
       { op: "create", goalId: "g1", title: "G1", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
       { op: "create", goalId: "g2", title: "G2", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },

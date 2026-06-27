@@ -7,6 +7,7 @@ import type {
   InsertAttemptResult,
   InsertGoalTick,
   InsertTick,
+  InsertTickResult,
   ProactivityStore,
   TickPatch,
   TickRecord,
@@ -47,23 +48,29 @@ export const createTestStore = (): ProactivityStore => {
 
     // --- Ticks ---
 
-    async insertTick(tick: InsertTick) {
+    async insertTick(tick: InsertTick): Promise<InsertTickResult> {
+      let maxTickNumber = 0;
+      for (const t of ticks.values()) {
+        if (t.entityId === tick.entityId && t.tickNumber > maxTickNumber) maxTickNumber = t.tickNumber;
+      }
+      const tickNumber = maxTickNumber + 1;
       const tickId = id();
+      const startedAt = new Date();
       ticks.set(tickId, {
         id: tickId,
         entityId: tick.entityId,
-        tickNumber: tick.tickNumber,
+        tickNumber,
         trigger: tick.trigger,
         dryRun: tick.dryRun,
         status: "running",
-        startedAt: new Date(),
+        startedAt,
         completedAt: null,
         goalsWorkedCount: 0,
         actionsTakenCount: 0,
         cadenceHintMs: null,
         error: null,
       });
-      return tickId;
+      return { tickId, tickNumber, startedAt };
     },
 
     async updateTick(tickId, patch: TickPatch) {

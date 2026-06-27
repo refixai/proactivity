@@ -24,11 +24,10 @@ pnpm add bullmq    # for @refixai/proactivity/bullmq
 ## Quick Start
 
 ```typescript
-import { createHeartbeat, createBriefing, createGovernance } from '@refixai/proactivity'
-import { createMemoryStore } from '@refixai/proactivity/memory'
+import { createHeartbeat, createTestStore } from '@refixai/proactivity'
 import { createTimerAdapter } from '@refixai/proactivity/timer'
 
-const store = createMemoryStore()
+const store = createTestStore() // in-memory, for dev/tests — use createPostgresStore for production
 
 const heartbeat = createHeartbeat({
   store,
@@ -155,10 +154,9 @@ const heartbeat = createPlanActHeartbeat({
 
 | Subpath | Purpose | Peer Dep |
 |---------|---------|----------|
-| `@refixai/proactivity` | Core primitives (zero deps) | — |
+| `@refixai/proactivity` | Core primitives + `createTestStore` (zero deps) | — |
 | `@refixai/proactivity/postgres` | Production store (raw SQL, ships migrations) | `pg` |
 | `@refixai/proactivity/bullmq` | Production scheduler (self-rescheduling) | `bullmq` |
-| `@refixai/proactivity/memory` | In-memory store for tests | — |
 | `@refixai/proactivity/timer` | setTimeout scheduler for development | — |
 
 ## Derived From Production

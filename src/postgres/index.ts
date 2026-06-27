@@ -1,7 +1,4 @@
 import pg from "pg";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import type {
   ActionAttempt,
   EntityState,
@@ -11,10 +8,95 @@ import type {
   InsertAttemptResult,
   InsertGoalTick,
   InsertTick,
+  InsertTickResult,
   ProactivityStore,
   TickPatch,
   TickRecord,
 } from "../core/types.js";
+
+const MIGRATION_001 = `
+CREATE TABLE IF NOT EXISTS proactivity_state (
+  entity_id varchar PRIMARY KEY,
+  enabled boolean NOT NULL DEFAULT true,
+  actions_require_approval boolean NOT NULL DEFAULT false,
+  last_tick_at timestamptz,
+  next_scheduled_tick_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS proactivity_ticks (
+  id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+  entity_id varchar NOT NULL REFERENCES proactivity_state(entity_id),
+  tick_number integer NOT NULL,
+  trigger varchar NOT NULL,
+  dry_run boolean NOT NULL DEFAULT false,
+  status varchar NOT NULL DEFAULT 'running',
+  started_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz,
+  goals_worked_count integer NOT NULL DEFAULT 0,
+  actions_taken_count integer NOT NULL DEFAULT 0,
+  cadence_hint_ms integer,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (entity_id, tick_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ticks_entity_number ON proactivity_ticks (entity_id, tick_number);
+CREATE INDEX IF NOT EXISTS idx_ticks_entity_status ON proactivity_ticks (entity_id, status, started_at);
+
+CREATE TABLE IF NOT EXISTS proactivity_goals (
+  id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+  entity_id varchar NOT NULL REFERENCES proactivity_state(entity_id),
+  title text NOT NULL,
+  objective text NOT NULL,
+  done_condition text NOT NULL,
+  findings text NOT NULL DEFAULT '',
+  next_actions text,
+  creation_reasoning text NOT NULL,
+  status varchar NOT NULL DEFAULT 'active',
+  priority varchar NOT NULL DEFAULT 'medium',
+  last_worked_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_goals_entity_status ON proactivity_goals (entity_id, status);
+
+CREATE TABLE IF NOT EXISTS proactivity_goal_ticks (
+  id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+  goal_id varchar NOT NULL REFERENCES proactivity_goals(id),
+  tick_id varchar NOT NULL REFERENCES proactivity_ticks(id),
+  order_index integer NOT NULL,
+  acted boolean NOT NULL DEFAULT false,
+  summary text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (goal_id, tick_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_goal_ticks_tick ON proactivity_goal_ticks (tick_id, order_index);
+
+CREATE TABLE IF NOT EXISTS proactivity_attempts (
+  id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+  goal_id varchar NOT NULL REFERENCES proactivity_goals(id),
+  tick_id varchar NOT NULL REFERENCES proactivity_ticks(id),
+  goal_tick_id varchar NOT NULL REFERENCES proactivity_goal_ticks(id),
+  action_type varchar NOT NULL,
+  idempotency_key varchar NOT NULL UNIQUE,
+  governance_outcome varchar NOT NULL,
+  reasoning text NOT NULL,
+  denial_reason text,
+  override_reason text,
+  target jsonb NOT NULL DEFAULT '{}',
+  payload jsonb,
+  attempted_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz,
+  error text
+);
+
+CREATE INDEX IF NOT EXISTS idx_attempts_tick ON proactivity_attempts (tick_id, governance_outcome);
+CREATE INDEX IF NOT EXISTS idx_attempts_goal ON proactivity_attempts (goal_id, attempted_at);
+`;
 
 export type PostgresStoreConfig =
   | { connectionString: string }
@@ -115,13 +197,18 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
 
     // --- Ticks ---
 
-    async insertTick(tick: InsertTick) {
+    async insertTick(tick: InsertTick): Promise<InsertTickResult> {
       const { rows } = await query(
         `INSERT INTO proactivity_ticks (entity_id, tick_number, trigger, dry_run)
-         VALUES ($1, $2, $3, $4) RETURNING id`,
-        [tick.entityId, tick.tickNumber, tick.trigger, tick.dryRun],
+         VALUES ($1, (SELECT COALESCE(MAX(tick_number), 0) + 1 FROM proactivity_ticks WHERE entity_id = $1::varchar), $2, $3)
+         RETURNING id, tick_number, started_at`,
+        [tick.entityId, tick.trigger, tick.dryRun],
       );
-      return rows[0].id as string;
+      return {
+        tickId: rows[0].id as string,
+        tickNumber: rows[0].tick_number as number,
+        startedAt: new Date(rows[0].started_at as string),
+      };
     },
 
     async updateTick(tickId, patch: TickPatch) {
@@ -282,13 +369,9 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
     },
 
     async migrate() {
-      const migrationDir = join(dirname(fileURLToPath(import.meta.url)), "../../migrations");
-      const sql = readFileSync(join(migrationDir, "001_initial.sql"), "utf-8");
-
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        // Create migrations table if needed (idempotent)
         await client.query(`
           CREATE TABLE IF NOT EXISTS proactivity_migrations (
             id serial PRIMARY KEY,
@@ -298,7 +381,7 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
         `);
         const { rows } = await client.query("SELECT name FROM proactivity_migrations WHERE name = $1", ["001_initial"]);
         if (rows.length === 0) {
-          await client.query(sql);
+          await client.query(MIGRATION_001);
           await client.query("INSERT INTO proactivity_migrations (name) VALUES ($1)", ["001_initial"]);
         }
         await client.query("COMMIT");
