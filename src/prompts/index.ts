@@ -1,5 +1,12 @@
 import type { GoalRecord } from "../core/types.js";
 
+const formatGoalsBlock = (goals: GoalRecord[]): string =>
+  goals.length
+    ? goals
+        .map((g) => `- [${g.status}/${g.priority}] ${g.title}: ${g.objective} (done when: ${g.doneCondition})`)
+        .join("\n")
+    : "(no goals yet)";
+
 // --- Single-loop (createHeartbeat) ---
 
 export type TickPromptInput = {
@@ -12,15 +19,7 @@ export type TickPromptInput = {
 
 export const buildTickPrompt = (input: TickPromptInput): string => {
   const { briefing, goals, entityId, tickNumber, extra } = input;
-
-  const goalsBlock = goals.length
-    ? goals
-        .map(
-          (g) =>
-            `- [${g.status}/${g.priority}] ${g.title}: ${g.objective} (done when: ${g.doneCondition})`,
-        )
-        .join("\n")
-    : "(no goals yet)";
+  const goalsBlock = formatGoalsBlock(goals);
 
   return `# You are an Autonomous Agent
 
@@ -93,15 +92,7 @@ export type ExecutorPromptInput = {
 
 export const buildPlannerPrompt = (input: PlannerPromptInput): string => {
   const { briefing, goals, entityId, tickNumber, extra } = input;
-
-  const goalsBlock = goals.length
-    ? goals
-        .map(
-          (g) =>
-            `- [${g.status}/${g.priority}] ${g.title}: ${g.objective} (done when: ${g.doneCondition})`,
-        )
-        .join("\n")
-    : "(no goals yet)";
+  const goalsBlock = formatGoalsBlock(goals);
 
   return `# You are a Planner
 

@@ -29,7 +29,6 @@ export const createGovernance = (
         ...request,
         tickId,
         idempotencyKey,
-        outcome: "hard_denied",
         denialReason: `Per-tick cap reached (${caps.perTick})`,
       });
     }
@@ -40,9 +39,24 @@ export const createGovernance = (
         ...request,
         tickId,
         idempotencyKey,
-        outcome: "hard_denied",
         denialReason: `Per-pass cap reached (${caps.perPass})`,
       });
+    }
+
+    for (const sc of softCaps) {
+      const result = sc.evaluate({
+        actionType: request.actionType,
+        target: request.target,
+        recentAttempts: await store.getRecentAttempts(entityId, { tickWindow: 5 }),
+      });
+      if (result.triggered && !request.overrideReason) {
+        return await recordDenied(store, {
+          ...request,
+          tickId,
+          idempotencyKey,
+          denialReason: result.warning ?? `Soft cap "${sc.name}" triggered`,
+        });
+      }
     }
 
     const insertResult = await store.insertAttempt({
@@ -78,27 +92,6 @@ export const createGovernance = (
         outcome: "pending_approval",
       });
       return { governanceOutcome: "pending_approval", attemptId, idempotencyKey };
-    }
-
-    for (const sc of softCaps) {
-      const result = sc.evaluate({
-        actionType: request.actionType,
-        target: request.target,
-        recentAttempts: await store.getRecentAttempts(entityId, { tickWindow: 5 }),
-      });
-      if (result.triggered && !request.overrideReason) {
-        ledger.record({
-          goalId: request.goalId,
-          goalTickId: request.goalTickId,
-          actionType: request.actionType,
-          outcome: "taken",
-        });
-        return {
-          governanceOutcome: "taken",
-          attemptId,
-          idempotencyKey,
-        };
-      }
     }
 
     try {
@@ -139,7 +132,6 @@ const recordDenied = async (
   opts: DispatchRequest & {
     tickId: string;
     idempotencyKey: string;
-    outcome: "hard_denied";
     denialReason: string;
   },
 ): Promise<DispatchResult> => {
@@ -149,7 +141,7 @@ const recordDenied = async (
     goalTickId: opts.goalTickId,
     actionType: opts.actionType,
     idempotencyKey: opts.idempotencyKey,
-    governanceOutcome: opts.outcome,
+    governanceOutcome: "hard_denied",
     reasoning: opts.reasoning,
     denialReason: opts.denialReason,
     overrideReason: null,
