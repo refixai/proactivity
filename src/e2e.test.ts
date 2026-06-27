@@ -364,7 +364,7 @@ describe("E2E: plan/act heartbeat", () => {
     await store.upsertState("org-1", { enabled: true, actionsRequireApproval: false });
 
     // Seed goals
-    const seedTick = await store.insertTick({ entityId: "org-1", tickNumber: 0, trigger: "manual", dryRun: false });
+    const { tickId: seedTick } = await store.insertTick({ entityId: "org-1", trigger: "manual", dryRun: false });
     await store.applyGoalMutations(seedTick, [
       { op: "create", goalId: "g1", title: "G1", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
       { op: "create", goalId: "g2", title: "G2", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },

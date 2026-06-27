@@ -30,17 +30,12 @@ const prepareTick = async (
 ): Promise<TickSetup> => {
   const { store, sources = [], governance: govConfig } = config;
 
-  const latestTick = await store.getLatestTick(entityId);
-  const tickNumber = (latestTick?.tickNumber ?? 0) + 1;
-
-  const tickId = await store.insertTick({
+  const { tickId, tickNumber, startedAt } = await store.insertTick({
     entityId,
-    tickNumber,
     trigger,
     dryRun: govConfig.dryRun ?? false,
   });
 
-  const startedAt = (await store.getLatestTick(entityId))!.startedAt;
   const previousTickStartedAt = await store.getPreviousTickStartedAt(entityId, tickNumber);
   const deltaCutoff = previousTickStartedAt
     ?? (config.entityCreatedAt ? await config.entityCreatedAt(entityId) : startedAt);

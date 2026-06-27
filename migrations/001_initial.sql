@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS proactivity_ticks (
   actions_taken_count integer NOT NULL DEFAULT 0,
   cadence_hint_ms integer,
   error text,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (entity_id, tick_number)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ticks_entity_number ON proactivity_ticks (entity_id, tick_number);

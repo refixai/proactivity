@@ -28,9 +28,14 @@ export type TickResult = {
 
 export type InsertTick = {
   entityId: string;
-  tickNumber: number;
   trigger: TickTrigger;
   dryRun: boolean;
+};
+
+export type InsertTickResult = {
+  tickId: string;
+  tickNumber: number;
+  startedAt: Date;
 };
 
 export type TickPatch = Partial<
@@ -213,7 +218,7 @@ export type ProactivityStore = {
     patch: Partial<EntityState>,
   ): Promise<void>;
 
-  insertTick(tick: InsertTick): Promise<string>;
+  insertTick(tick: InsertTick): Promise<InsertTickResult>;
   updateTick(tickId: string, patch: TickPatch): Promise<void>;
   getLatestTick(entityId: string): Promise<TickRecord | null>;
   getPreviousTickStartedAt(

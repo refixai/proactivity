@@ -43,6 +43,7 @@ export type {
   TickCallbackResult,
   CadenceConfig,
   InsertTick,
+  InsertTickResult,
   TickPatch,
   InsertGoalTick,
   InsertAttempt,
