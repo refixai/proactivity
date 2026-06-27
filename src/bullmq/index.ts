@@ -7,9 +7,12 @@ export type BullMQAdapterConfig = {
 };
 
 export type BullMQAdapter = SchedulerAdapter & {
-  onFire: (handler: (entityId: string) => void) => void;
   close: () => Promise<void>;
 };
+
+// BullMQ rejects custom job ids containing ":" (its Redis key separator).
+// Consumers namespace identities with colons ("heartbeat:e1"), so normalize.
+const safeJobId = (jobId: string) => jobId.replace(/:/g, "-");
 
 export const createBullMQAdapter = (config: BullMQAdapterConfig): BullMQAdapter => {
   const queue = new Queue(config.queueName, { connection: config.connection });
@@ -19,26 +22,29 @@ export const createBullMQAdapter = (config: BullMQAdapterConfig): BullMQAdapter 
   return {
     onFire(handler) {
       fireHandler = handler;
-      worker = new Worker(
-        config.queueName,
-        async (job) => { fireHandler?.(job.data.entityId); },
-        { connection: config.connection },
-      );
+      // Fire on "completed", not inside the processor: by the time this event
+      // emits, removeOnComplete has freed the jobId, so the handler's re-enqueue
+      // of the same id isn't deduped against the still-present old job.
+      worker = new Worker(config.queueName, async () => {}, { connection: config.connection });
+      worker.on("completed", (job) => { fireHandler?.(job.data.entityId); });
     },
 
     async enqueue({ entityId, delayMs, jobId }) {
-      await queue.add("tick", { entityId }, { jobId, delay: delayMs });
+      // removeOnComplete/Fail frees the jobId so the self-rescheduling loop can
+      // re-add the same id next tick — BullMQ dedupes against retained jobs.
+      await queue.add("tick", { entityId }, { jobId: safeJobId(jobId), delay: delayMs, removeOnComplete: true, removeOnFail: true });
     },
 
     async remove(jobId) {
-      const job = await queue.getJob(jobId);
-      if (job) await job.remove();
-    },
-
-    async reschedule({ jobId, delayMs }) {
-      const job = await queue.getJob(jobId);
+      const job = await queue.getJob(safeJobId(jobId));
       if (!job) return;
-      await job.changeDelay(delayMs);
+      try {
+        await job.remove();
+      } catch {
+        // ponytail: job is active (locked) — it auto-removes on completion
+        // (removeOnComplete) and the scheduler's gate blocks re-enqueue, so
+        // stop() still halts the loop. Nothing to do.
+      }
     },
 
     async close() {

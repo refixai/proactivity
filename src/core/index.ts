@@ -1,12 +1,7 @@
 export { createTestStore } from "../memory/index.js";
 export { createScheduler, type Scheduler } from "./scheduler.js";
 export { createBriefing, type BriefingAssembler } from "./briefing.js";
-export { createGovernance } from "./governance.js";
 export { createHeartbeat, createPlanActHeartbeat, type Heartbeat } from "./heartbeat.js";
-export { createLedger, type Ledger } from "./ledger.js";
-export { clampCadence } from "./cadence.js";
-export { deriveIdempotencyKey } from "./idempotency.js";
-export { validateGoalMutations } from "./goals.js";
 
 export type {
   ProactivityStore,

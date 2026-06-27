@@ -22,7 +22,7 @@ const makeCadenceConfig = () => ({
 describe("createHeartbeat", () => {
   test("full tick lifecycle: briefing → callback → result", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
 
     const tickFn = vi.fn(async (ctx: TickContext) => {
       expect(ctx.briefing).toEqual({ signals: { event: "user_login" } });
@@ -53,7 +53,7 @@ describe("createHeartbeat", () => {
 
   test("governance dispatch works inside tick callback", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const performed = vi.fn();
 
     const heartbeat = createHeartbeat({
@@ -82,7 +82,7 @@ describe("createHeartbeat", () => {
 
   test("tick number increments across runs", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
 
     const tickNumbers: number[] = [];
     const heartbeat = createHeartbeat({
@@ -104,7 +104,7 @@ describe("createHeartbeat", () => {
 
   test("delta cutoff uses previous tick startedAt", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
 
     let firstTickStartedAt: Date | undefined;
     let secondDeltaCutoff: Date | undefined;
@@ -132,7 +132,7 @@ describe("createHeartbeat", () => {
 
   test("cadence hint null defaults to config.default", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
 
     const heartbeat = createHeartbeat({
       store,
@@ -148,7 +148,7 @@ describe("createHeartbeat", () => {
 
   test("tick callback error results in failed tick", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
 
     const heartbeat = createHeartbeat({
       store,
@@ -171,7 +171,7 @@ describe("createHeartbeat", () => {
 
   test("dry run mode passes through to governance", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const performed = vi.fn();
 
     const heartbeat = createHeartbeat({
@@ -199,7 +199,7 @@ describe("createHeartbeat", () => {
 
   test("soft cap denies action without override", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const performed = vi.fn();
 
     const heartbeat = createHeartbeat({
@@ -234,7 +234,7 @@ describe("createHeartbeat", () => {
 
   test("soft cap allows action with override reason", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const performed = vi.fn();
 
     const heartbeat = createHeartbeat({
@@ -269,7 +269,7 @@ describe("createHeartbeat", () => {
 
   test("entityCreatedAt provides delta cutoff for first tick", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const entityCreated = new Date("2025-01-01");
 
     let deltaCutoff: Date | undefined;
@@ -293,7 +293,7 @@ describe("createHeartbeat", () => {
 describe("createPlanActHeartbeat", () => {
   test("planner then executor lifecycle", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
 
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     await store.applyGoalMutations(tickId, [
@@ -309,7 +309,6 @@ describe("createPlanActHeartbeat", () => {
       sources: [{ name: "data", load: async () => ({ x: 1 }) }],
       governance: makeGovernanceConfig(store),
       cadence: makeCadenceConfig(),
-      tick: async () => ({}),
       planner: async (ctx) => {
         plannerCalled();
         expect(ctx.goals).toHaveLength(1);
@@ -337,7 +336,7 @@ describe("createPlanActHeartbeat", () => {
 
   test("executor crash does not abort tick", async () => {
     const store = createTestStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
 
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     await store.applyGoalMutations(tickId, [
@@ -353,7 +352,6 @@ describe("createPlanActHeartbeat", () => {
       sources: [],
       governance: makeGovernanceConfig(store),
       cadence: makeCadenceConfig(),
-      tick: async () => ({}),
       planner: async () => ({
         goalMutations: [],
         selectedGoals: [
@@ -373,5 +371,38 @@ describe("createPlanActHeartbeat", () => {
     expect(result.status).toBe("completed");
     expect(executorCalls).toEqual(["g1", "g2"]);
     expect(result.goalsWorkedCount).toBe(1);
+  });
+
+  test("invalid goal mutations from planner fail the tick before any are applied", async () => {
+    const store = createTestStore();
+    await store.upsertState("e1", { enabled: true });
+    const applySpy = vi.spyOn(store, "applyGoalMutations");
+
+    const executorCalled = vi.fn();
+    const heartbeat = createPlanActHeartbeat({
+      store,
+      sources: [],
+      governance: makeGovernanceConfig(store),
+      cadence: makeCadenceConfig(),
+      planner: async () => ({
+        // archive without a goalId — the kind of malformed batch an LLM emits
+        goalMutations: [{ op: "archive", reasoning: "drop the stale one" }],
+        selectedGoals: [],
+        skippedGoals: [],
+      }),
+      executor: async () => {
+        executorCalled();
+        return { acted: false, summary: "" };
+      },
+    });
+
+    const result = await heartbeat.runTick("e1", "manual");
+
+    expect(result.status).toBe("failed");
+    expect(applySpy).not.toHaveBeenCalled();
+    expect(executorCalled).not.toHaveBeenCalled();
+
+    const tick = await store.getLatestTick("e1");
+    expect(tick!.error).toContain("missing goalId");
   });
 });

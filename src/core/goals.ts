@@ -1,5 +1,7 @@
 import type { GoalMutation } from "./types.js";
 
+// Validates a batch of goal mutations from the (LLM) planner before they reach
+// the store. Returns human-readable errors; empty array means the batch is clean.
 export const validateGoalMutations = (mutations: GoalMutation[]): string[] => {
   const errors: string[] = [];
   const seen = new Set<string>();

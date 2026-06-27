@@ -118,8 +118,7 @@ export type GovernanceOutcome =
   | "taken"
   | "hard_denied"
   | "soft_cap_overridden"
-  | "pending_approval"
-  | "denied_by_admin";
+  | "pending_approval";
 
 export type ActionAttempt = {
   id: string;
@@ -204,7 +203,6 @@ export type PassResult = {
 export type EntityState = {
   entityId: string;
   enabled: boolean;
-  actionsRequireApproval: boolean;
   lastTickAt: Date | null;
   nextScheduledTickAt: Date | null;
 };
@@ -269,7 +267,8 @@ export type SchedulerAdapter = {
 
   remove(jobId: string): Promise<void>;
 
-  reschedule(opts: { jobId: string; delayMs: number }): Promise<void>;
+  // Register the handler the adapter invokes when a scheduled job fires.
+  onFire(handler: (entityId: string) => void): void;
 };
 
 // --- Config ---
@@ -300,6 +299,10 @@ export type SchedulerConfig = {
   cadence: CadenceConfig;
   identity: (entityId: string) => string;
   onTick: (entityId: string, trigger: TickTrigger) => Promise<TickResult>;
+  // Called if a background scheduled tick throws (Redis/DB failure during
+  // re-enqueue). Without it, such errors are swallowed. The tick itself
+  // records its own failures via the store, so this only fires on infra errors.
+  onError?: (error: unknown, entityId: string) => void;
 };
 
 export type GovernanceConfig = {
@@ -318,7 +321,7 @@ export type HeartbeatConfig = {
   entityCreatedAt?: (entityId: string) => Promise<Date>;
 };
 
-export type PlanActConfig = HeartbeatConfig & {
+export type PlanActConfig = Omit<HeartbeatConfig, "tick"> & {
   planner: (ctx: PlannerContext) => Promise<PlanOutput>;
   executor: (ctx: ExecutorContext) => Promise<PassResult>;
 };

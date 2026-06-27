@@ -1,6 +1,7 @@
 import { createBriefing } from "./briefing.js";
 import { clampCadence } from "./cadence.js";
 import { createGovernance } from "./governance.js";
+import { validateGoalMutations } from "./goals.js";
 import { createLedger } from "./ledger.js";
 import type {
   BriefingBoundary,
@@ -24,7 +25,7 @@ type TickSetup = {
 };
 
 const prepareTick = async (
-  config: HeartbeatConfig,
+  config: Omit<HeartbeatConfig, "tick">,
   entityId: string,
   trigger: TickTrigger,
 ): Promise<TickSetup> => {
@@ -116,6 +117,10 @@ export const createPlanActHeartbeat = (config: PlanActConfig): Heartbeat => {
         const plan = await config.planner({ boundary, briefing, goals });
 
         if (plan.goalMutations.length > 0) {
+          const mutationErrors = validateGoalMutations(plan.goalMutations);
+          if (mutationErrors.length > 0) {
+            throw new Error(`Invalid goal mutations from planner: ${mutationErrors.join("; ")}`);
+          }
           await store.applyGoalMutations(tickId, plan.goalMutations);
         }
 

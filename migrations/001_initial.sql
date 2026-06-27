@@ -3,7 +3,6 @@
 CREATE TABLE IF NOT EXISTS proactivity_state (
   entity_id varchar PRIMARY KEY,
   enabled boolean NOT NULL DEFAULT true,
-  actions_require_approval boolean NOT NULL DEFAULT false,
   last_tick_at timestamptz,
   next_scheduled_tick_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),

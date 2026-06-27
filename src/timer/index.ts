@@ -1,11 +1,7 @@
 import type { SchedulerAdapter } from "../core/types.js";
 
-export type TimerAdapter = SchedulerAdapter & {
-  onFire: (handler: (entityId: string) => void) => void;
-};
-
-export const createTimerAdapter = (): TimerAdapter => {
-  const timers = new Map<string, { timeout: ReturnType<typeof setTimeout>; entityId: string }>();
+export const createTimerAdapter = (): SchedulerAdapter => {
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
   let fireHandler: ((entityId: string) => void) | null = null;
 
   return {
@@ -18,27 +14,15 @@ export const createTimerAdapter = (): TimerAdapter => {
         timers.delete(jobId);
         fireHandler?.(entityId);
       }, delayMs);
-      timers.set(jobId, { timeout, entityId });
+      timers.set(jobId, timeout);
     },
 
     async remove(jobId) {
-      const entry = timers.get(jobId);
-      if (entry) {
-        clearTimeout(entry.timeout);
+      const timeout = timers.get(jobId);
+      if (timeout) {
+        clearTimeout(timeout);
         timers.delete(jobId);
       }
-    },
-
-    async reschedule({ jobId, delayMs }) {
-      const entry = timers.get(jobId);
-      if (!entry) return;
-      clearTimeout(entry.timeout);
-      const { entityId } = entry;
-      const timeout = setTimeout(() => {
-        timers.delete(jobId);
-        fireHandler?.(entityId);
-      }, delayMs);
-      timers.set(jobId, { timeout, entityId });
     },
   };
 };
