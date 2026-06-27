@@ -18,7 +18,7 @@ describe("createTestStore", () => {
     const store = makeStore();
     expect(await store.getState("e1")).toBeNull();
 
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const state = await store.getState("e1");
     expect(state).toMatchObject({ entityId: "e1", enabled: true });
 

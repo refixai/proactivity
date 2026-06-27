@@ -11,7 +11,6 @@ export type Ledger = {
   record: (entry: LedgerEntry) => void;
   countActionsTaken: () => number;
   countActionsForPass: (goalTickId: string) => number;
-  getEntries: () => ReadonlyArray<LedgerEntry>;
 };
 
 export const createLedger = (): Ledger => {
@@ -31,7 +30,5 @@ export const createLedger = (): Ledger => {
           e.goalTickId === goalTickId &&
           (e.outcome === "taken" || e.outcome === "soft_cap_overridden"),
       ).length,
-
-    getEntries: () => entries,
   };
 };

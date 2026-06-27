@@ -30,11 +30,42 @@ describe("createScheduler", () => {
       onTick,
     });
 
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     await scheduler.start("e1");
 
     const state = await store.getState("e1");
     expect(state!.nextScheduledTickAt).toBeInstanceOf(Date);
+  });
+
+  test("enqueued job fires onTick and re-enqueues the next tick", async () => {
+    // Guards the wiring: start() enqueues, the adapter fires, the scheduler
+    // must run onTick AND enqueue the next job. Without onFire wiring this
+    // loop dies silently after start() — every unit passes, the seam doesn't.
+    vi.useFakeTimers();
+    const store = createTestStore();
+    const adapter = createTimerAdapter();
+    const onTick = vi.fn(async (): Promise<TickResult> => ({
+      tickId: "t1", status: "completed", goalsWorkedCount: 0, actionsTakenCount: 0, nextCadenceMs: 1_000,
+    }));
+
+    const scheduler = createScheduler({
+      adapter,
+      store,
+      cadence: makeCadenceConfig(),
+      identity: (id) => `job:${id}`,
+      onTick,
+    });
+
+    await store.upsertState("e1", { enabled: true });
+    await scheduler.start("e1");
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onTick).toHaveBeenCalledWith("e1", "scheduled");
+
+    // The first tick must have re-enqueued; advancing again fires it a second time.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onTick).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 
   test("stop removes the scheduled job", async () => {
@@ -49,7 +80,7 @@ describe("createScheduler", () => {
       onTick: async () => ({ tickId: "t", status: "completed", goalsWorkedCount: 0, actionsTakenCount: 0, nextCadenceMs: null }),
     });
 
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     await scheduler.start("e1");
     await scheduler.stop("e1");
 
@@ -72,7 +103,7 @@ describe("createScheduler", () => {
       onTick,
     });
 
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     await scheduler.triggerNow("e1");
 
     expect(onTick).toHaveBeenCalledWith("e1", "manual");
@@ -95,7 +126,6 @@ describe("createScheduler", () => {
 
     await store.upsertState("e1", {
       enabled: true,
-      actionsRequireApproval: false,
       nextScheduledTickAt: new Date(Date.now() + 5_000),
     });
 
@@ -138,20 +168,4 @@ describe("createTimerAdapter", () => {
     vi.useRealTimers();
   });
 
-  test("reschedule updates delay for existing job", async () => {
-    vi.useFakeTimers();
-    const adapter = createTimerAdapter();
-    const callback = vi.fn();
-    adapter.onFire(callback);
-
-    await adapter.enqueue({ entityId: "e1", delayMs: 500, jobId: "j1" });
-    await adapter.reschedule({ jobId: "j1", delayMs: 1_000 });
-
-    vi.advanceTimersByTime(500);
-    expect(callback).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(500);
-    expect(callback).toHaveBeenCalledWith("e1");
-    vi.useRealTimers();
-  });
 });

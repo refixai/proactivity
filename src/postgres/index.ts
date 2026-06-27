@@ -18,7 +18,6 @@ const MIGRATION_001 = `
 CREATE TABLE IF NOT EXISTS proactivity_state (
   entity_id varchar PRIMARY KEY,
   enabled boolean NOT NULL DEFAULT true,
-  actions_require_approval boolean NOT NULL DEFAULT false,
   last_tick_at timestamptz,
   next_scheduled_tick_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -105,7 +104,6 @@ export type PostgresStoreConfig =
 const toEntityState = (row: Record<string, unknown>): EntityState => ({
   entityId: row.entity_id as string,
   enabled: row.enabled as boolean,
-  actionsRequireApproval: row.actions_require_approval as boolean,
   lastTickAt: row.last_tick_at ? new Date(row.last_tick_at as string) : null,
   nextScheduledTickAt: row.next_scheduled_tick_at ? new Date(row.next_scheduled_tick_at as string) : null,
 });
@@ -178,7 +176,6 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
       let idx = 2;
 
       if (patch.enabled !== undefined) { columns.push("enabled"); values.push(patch.enabled); }
-      if (patch.actionsRequireApproval !== undefined) { columns.push("actions_require_approval"); values.push(patch.actionsRequireApproval); }
       if (patch.lastTickAt !== undefined) { columns.push("last_tick_at"); values.push(patch.lastTickAt); }
       if (patch.nextScheduledTickAt !== undefined) { columns.push("next_scheduled_tick_at"); values.push(patch.nextScheduledTickAt); }
 

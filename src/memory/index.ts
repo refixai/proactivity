@@ -38,7 +38,6 @@ export const createTestStore = (): ProactivityStore => {
         entities.set(entityId, {
           entityId,
           enabled: true,
-          actionsRequireApproval: false,
           lastTickAt: null,
           nextScheduledTickAt: null,
           ...patch,

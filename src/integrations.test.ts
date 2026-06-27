@@ -61,7 +61,7 @@ describe("integration patterns", () => {
       return { cadenceHint: { nextTickMs: 300_000, reasoning: "follow up" } };
     });
 
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const result = await heartbeat.runTick("e1", "manual");
 
     expect(result.status).toBe("completed");
@@ -106,7 +106,7 @@ describe("integration patterns", () => {
       return { cadenceHint: simulatedLlmResponse.cadenceHint };
     });
 
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const result = await heartbeat.runTick("e1", "manual");
 
     expect(result.actionsTakenCount).toBe(2);
@@ -147,7 +147,7 @@ describe("integration patterns", () => {
       return {};
     });
 
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const result = await heartbeat.runTick("e1", "manual");
 
     expect(result.actionsTakenCount).toBe(2);
@@ -184,7 +184,7 @@ describe("integration patterns", () => {
       return { cadenceHint: { nextTickMs: 900_000, reasoning: "low activity" } };
     });
 
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const result = await heartbeat.runTick("e1", "manual");
 
     expect(result.actionsTakenCount).toBe(1);
@@ -218,7 +218,7 @@ describe("integration patterns", () => {
       return {};
     });
 
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const result = await heartbeat.runTick("e1", "manual");
 
     expect(result.actionsTakenCount).toBe(3);
@@ -255,7 +255,7 @@ describe("integration patterns", () => {
       return {};
     });
 
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     await heartbeat.runTick("e1", "manual");
 
     expect(performed).toEqual(["sent"]);

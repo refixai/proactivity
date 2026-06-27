@@ -42,7 +42,7 @@ describe("createPostgresStore", () => {
     const store = makeStore();
     expect(await store.getState("e1")).toBeNull();
 
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const state = await store.getState("e1");
     expect(state).toMatchObject({ entityId: "e1", enabled: true });
 
@@ -54,7 +54,7 @@ describe("createPostgresStore", () => {
 
   test("insertTick and getLatestTick round-trip", async () => {
     const store = makeStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
 
     const { tickId } = await store.insertTick({
       entityId: "e1",
@@ -73,7 +73,7 @@ describe("createPostgresStore", () => {
 
   test("updateTick patches tick fields", async () => {
     const store = makeStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
 
     const { tickId } = await store.insertTick({
       entityId: "e1",
@@ -96,7 +96,7 @@ describe("createPostgresStore", () => {
 
   test("getPreviousTickStartedAt returns prior tick time", async () => {
     const store = makeStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
 
     await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     await store.insertTick({ entityId: "e1", trigger: "scheduled", dryRun: false });
@@ -112,7 +112,7 @@ describe("createPostgresStore", () => {
 
   test("applyGoalMutations creates goals", async () => {
     const store = makeStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     const mutations: GoalMutation[] = [
@@ -135,7 +135,7 @@ describe("createPostgresStore", () => {
 
   test("applyGoalMutations updates, completes, archives goals", async () => {
     const store = makeStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     await store.applyGoalMutations(tickId, [
@@ -162,7 +162,7 @@ describe("createPostgresStore", () => {
 
   test("listGoals filters by status", async () => {
     const store = makeStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     await store.applyGoalMutations(tickId, [
@@ -184,7 +184,7 @@ describe("createPostgresStore", () => {
 
   test("insertGoalTick and updateGoalTick round-trip", async () => {
     const store = makeStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
     await store.applyGoalMutations(tickId, [
@@ -202,7 +202,7 @@ describe("createPostgresStore", () => {
 
   test("insertAttempt and idempotency conflict", async () => {
     const store = makeStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     const { goalId, goalTickId } = await seedGoalAndGoalTick(store, "e1", tickId);
 
@@ -229,7 +229,7 @@ describe("createPostgresStore", () => {
 
   test("markAttemptCompleted and markAttemptFailed", async () => {
     const store = makeStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     const { goalId, goalTickId } = await seedGoalAndGoalTick(store, "e1", tickId);
 
@@ -261,7 +261,7 @@ describe("createPostgresStore", () => {
 
   test("getRecentAttempts returns attempts within tick window", async () => {
     const store = makeStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true });
 
     const { tickId: t1 } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
     const s1 = await seedGoalAndGoalTick(store, "e1", t1);
@@ -294,9 +294,9 @@ describe("createPostgresStore", () => {
 
   test("listSchedulableEntities returns enabled entities with scheduled ticks", async () => {
     const store = makeStore();
-    await store.upsertState("e1", { enabled: true, actionsRequireApproval: false, nextScheduledTickAt: new Date() });
-    await store.upsertState("e2", { enabled: false, actionsRequireApproval: false, nextScheduledTickAt: new Date() });
-    await store.upsertState("e3", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("e1", { enabled: true, nextScheduledTickAt: new Date() });
+    await store.upsertState("e2", { enabled: false, nextScheduledTickAt: new Date() });
+    await store.upsertState("e3", { enabled: true });
 
     const schedulable = await store.listSchedulableEntities();
     expect(schedulable).toHaveLength(1);
@@ -317,7 +317,7 @@ describe("createPostgresStore", () => {
     const { createHeartbeat } = await import("../core/heartbeat.js");
     const store = makeStore();
 
-    await store.upsertState("org-1", { enabled: true, actionsRequireApproval: false });
+    await store.upsertState("org-1", { enabled: true });
 
     const performed: string[] = [];
 
