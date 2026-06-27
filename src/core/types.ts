@@ -248,6 +248,8 @@ export type ProactivityStore = {
     opts: { tickWindow: number },
   ): Promise<ActionAttempt[]>;
 
+  listSchedulableEntities(): Promise<EntityState[]>;
+
   migrate(): Promise<void>;
 };
 

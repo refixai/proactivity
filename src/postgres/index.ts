@@ -1,10 +1,317 @@
-import type { ProactivityStore } from "../core/types.js";
+import pg from "pg";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import type {
+  ActionAttempt,
+  EntityState,
+  GoalMutation,
+  GoalRecord,
+  InsertAttempt,
+  InsertAttemptResult,
+  InsertGoalTick,
+  InsertTick,
+  ProactivityStore,
+  TickPatch,
+  TickRecord,
+} from "../core/types.js";
 
-export type PostgresStoreConfig = {
-  connectionString: string;
-  schema?: string;
-};
+export type PostgresStoreConfig =
+  | { connectionString: string }
+  | { pool: pg.Pool };
 
-export const createPostgresStore = (_config: PostgresStoreConfig): ProactivityStore => {
-  throw new Error("Not implemented");
+const toEntityState = (row: Record<string, unknown>): EntityState => ({
+  entityId: row.entity_id as string,
+  enabled: row.enabled as boolean,
+  actionsRequireApproval: row.actions_require_approval as boolean,
+  lastTickAt: row.last_tick_at ? new Date(row.last_tick_at as string) : null,
+  nextScheduledTickAt: row.next_scheduled_tick_at ? new Date(row.next_scheduled_tick_at as string) : null,
+});
+
+const toTickRecord = (row: Record<string, unknown>): TickRecord => ({
+  id: row.id as string,
+  entityId: row.entity_id as string,
+  tickNumber: row.tick_number as number,
+  trigger: row.trigger as TickRecord["trigger"],
+  dryRun: row.dry_run as boolean,
+  status: row.status as TickRecord["status"],
+  startedAt: new Date(row.started_at as string),
+  completedAt: row.completed_at ? new Date(row.completed_at as string) : null,
+  goalsWorkedCount: row.goals_worked_count as number,
+  actionsTakenCount: row.actions_taken_count as number,
+  cadenceHintMs: row.cadence_hint_ms as number | null,
+  error: row.error as string | null,
+});
+
+const toGoalRecord = (row: Record<string, unknown>): GoalRecord => ({
+  id: row.id as string,
+  entityId: row.entity_id as string,
+  title: row.title as string,
+  objective: row.objective as string,
+  doneCondition: row.done_condition as string,
+  findings: row.findings as string,
+  nextActions: row.next_actions as string | null,
+  creationReasoning: row.creation_reasoning as string,
+  status: row.status as GoalRecord["status"],
+  priority: row.priority as GoalRecord["priority"],
+  lastWorkedAt: row.last_worked_at ? new Date(row.last_worked_at as string) : null,
+  createdAt: new Date(row.created_at as string),
+  updatedAt: new Date(row.updated_at as string),
+});
+
+const toAttempt = (row: Record<string, unknown>): ActionAttempt => ({
+  id: row.id as string,
+  goalId: row.goal_id as string,
+  tickId: row.tick_id as string,
+  goalTickId: row.goal_tick_id as string,
+  actionType: row.action_type as string,
+  idempotencyKey: row.idempotency_key as string,
+  governanceOutcome: row.governance_outcome as ActionAttempt["governanceOutcome"],
+  reasoning: row.reasoning as string,
+  denialReason: row.denial_reason as string | null,
+  overrideReason: row.override_reason as string | null,
+  target: row.target as Record<string, unknown>,
+  payload: row.payload ?? null,
+  attemptedAt: new Date(row.attempted_at as string),
+  completedAt: row.completed_at ? new Date(row.completed_at as string) : null,
+  error: row.error as string | null,
+});
+
+export const createPostgresStore = (config: PostgresStoreConfig): ProactivityStore & { end: () => Promise<void> } => {
+  const pool = "pool" in config ? config.pool : new pg.Pool({ connectionString: config.connectionString });
+
+  const query = (text: string, values?: unknown[]) => pool.query(text, values);
+
+  return {
+    // --- Entity State ---
+
+    async getState(entityId) {
+      const { rows } = await query("SELECT * FROM proactivity_state WHERE entity_id = $1", [entityId]);
+      return rows[0] ? toEntityState(rows[0]) : null;
+    },
+
+    async upsertState(entityId, patch) {
+      const columns: string[] = [];
+      const values: unknown[] = [entityId];
+      let idx = 2;
+
+      if (patch.enabled !== undefined) { columns.push("enabled"); values.push(patch.enabled); }
+      if (patch.actionsRequireApproval !== undefined) { columns.push("actions_require_approval"); values.push(patch.actionsRequireApproval); }
+      if (patch.lastTickAt !== undefined) { columns.push("last_tick_at"); values.push(patch.lastTickAt); }
+      if (patch.nextScheduledTickAt !== undefined) { columns.push("next_scheduled_tick_at"); values.push(patch.nextScheduledTickAt); }
+
+      const colList = columns.length ? `, ${columns.join(", ")}` : "";
+      const valList = columns.length ? `, ${columns.map(() => `$${idx++}`).join(", ")}` : "";
+      const updateSet = columns.map((c, i) => `${c} = $${i + 2}`).join(", ");
+      const updateClause = updateSet ? `${updateSet}, updated_at = now()` : "updated_at = now()";
+
+      await query(
+        `INSERT INTO proactivity_state (entity_id${colList})
+         VALUES ($1${valList})
+         ON CONFLICT (entity_id) DO UPDATE SET ${updateClause}`,
+        values,
+      );
+    },
+
+    // --- Ticks ---
+
+    async insertTick(tick: InsertTick) {
+      const { rows } = await query(
+        `INSERT INTO proactivity_ticks (entity_id, tick_number, trigger, dry_run)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [tick.entityId, tick.tickNumber, tick.trigger, tick.dryRun],
+      );
+      return rows[0].id as string;
+    },
+
+    async updateTick(tickId, patch: TickPatch) {
+      const setClauses: string[] = [];
+      const values: unknown[] = [tickId];
+      let idx = 2;
+
+      if (patch.status !== undefined) { setClauses.push(`status = $${idx++}`); values.push(patch.status); }
+      if (patch.completedAt !== undefined) { setClauses.push(`completed_at = $${idx++}`); values.push(patch.completedAt); }
+      if (patch.goalsWorkedCount !== undefined) { setClauses.push(`goals_worked_count = $${idx++}`); values.push(patch.goalsWorkedCount); }
+      if (patch.actionsTakenCount !== undefined) { setClauses.push(`actions_taken_count = $${idx++}`); values.push(patch.actionsTakenCount); }
+      if (patch.cadenceHintMs !== undefined) { setClauses.push(`cadence_hint_ms = $${idx++}`); values.push(patch.cadenceHintMs); }
+      if (patch.error !== undefined) { setClauses.push(`error = $${idx++}`); values.push(patch.error); }
+
+      if (setClauses.length === 0) return;
+      await query(`UPDATE proactivity_ticks SET ${setClauses.join(", ")} WHERE id = $1`, values);
+    },
+
+    async getLatestTick(entityId) {
+      const { rows } = await query(
+        "SELECT * FROM proactivity_ticks WHERE entity_id = $1 ORDER BY tick_number DESC LIMIT 1",
+        [entityId],
+      );
+      return rows[0] ? toTickRecord(rows[0]) : null;
+    },
+
+    async getPreviousTickStartedAt(entityId, currentTickNumber) {
+      const { rows } = await query(
+        "SELECT started_at FROM proactivity_ticks WHERE entity_id = $1 AND tick_number < $2 ORDER BY tick_number DESC LIMIT 1",
+        [entityId, currentTickNumber],
+      );
+      return rows[0] ? new Date(rows[0].started_at as string) : null;
+    },
+
+    // --- Goals ---
+
+    async listGoals(entityId, filter) {
+      const statusFilter = filter?.status?.length
+        ? ` AND status IN (${filter.status.map((_, i) => `$${i + 2}`).join(", ")})`
+        : "";
+      const { rows } = await query(
+        `SELECT * FROM proactivity_goals WHERE entity_id = $1${statusFilter} ORDER BY created_at`,
+        [entityId, ...(filter?.status ?? [])],
+      );
+      return rows.map(toGoalRecord);
+    },
+
+    async getGoal(goalId) {
+      const { rows } = await query("SELECT * FROM proactivity_goals WHERE id = $1", [goalId]);
+      return rows[0] ? toGoalRecord(rows[0]) : null;
+    },
+
+    async applyGoalMutations(tickId, mutations: GoalMutation[]) {
+      const { rows: tickRows } = await query("SELECT entity_id FROM proactivity_ticks WHERE id = $1", [tickId]);
+      const entityId = tickRows[0]?.entity_id as string ?? "unknown";
+
+      for (const m of mutations) {
+        if (m.op === "create") {
+          const goalId = m.goalId ?? crypto.randomUUID();
+          await query(
+            `INSERT INTO proactivity_goals (id, entity_id, title, objective, done_condition, findings, next_actions, creation_reasoning, priority)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [goalId, entityId, m.title, m.objective ?? "", m.doneCondition ?? "", m.findings ?? "", m.nextActions ?? null, m.reasoning, m.priority ?? "medium"],
+          );
+        } else if (m.op === "update") {
+          const sets: string[] = ["updated_at = now()"];
+          const vals: unknown[] = [m.goalId];
+          let i = 2;
+          if (m.title !== undefined) { sets.push(`title = $${i++}`); vals.push(m.title); }
+          if (m.objective !== undefined) { sets.push(`objective = $${i++}`); vals.push(m.objective); }
+          if (m.doneCondition !== undefined) { sets.push(`done_condition = $${i++}`); vals.push(m.doneCondition); }
+          if (m.findings !== undefined) { sets.push(`findings = $${i++}`); vals.push(m.findings); }
+          if (m.nextActions !== undefined) { sets.push(`next_actions = $${i++}`); vals.push(m.nextActions); }
+          if (m.priority !== undefined) { sets.push(`priority = $${i++}`); vals.push(m.priority); }
+          await query(`UPDATE proactivity_goals SET ${sets.join(", ")} WHERE id = $1`, vals);
+        } else if (m.op === "reprioritize") {
+          if (m.priority !== undefined) {
+            await query("UPDATE proactivity_goals SET priority = $2, updated_at = now() WHERE id = $1", [m.goalId, m.priority]);
+          }
+        } else if (m.op === "complete" || m.op === "archive" || m.op === "pause") {
+          const status = m.op === "complete" ? "completed" : m.op === "archive" ? "archived" : "paused";
+          await query("UPDATE proactivity_goals SET status = $2, updated_at = now() WHERE id = $1", [m.goalId, status]);
+        }
+      }
+    },
+
+    async insertGoalTick(entry: InsertGoalTick) {
+      const { rows } = await query(
+        "INSERT INTO proactivity_goal_ticks (goal_id, tick_id, order_index) VALUES ($1, $2, $3) RETURNING id",
+        [entry.goalId, entry.tickId, entry.orderIndex],
+      );
+      return rows[0].id as string;
+    },
+
+    async updateGoalTick(goalTickId, patch) {
+      await query(
+        "UPDATE proactivity_goal_ticks SET acted = $2, summary = $3 WHERE id = $1",
+        [goalTickId, patch.acted, patch.summary],
+      );
+    },
+
+    // --- Attempts ---
+
+    async insertAttempt(attempt: InsertAttempt): Promise<InsertAttemptResult> {
+      try {
+        const { rows } = await query(
+          `INSERT INTO proactivity_attempts (goal_id, tick_id, goal_tick_id, action_type, idempotency_key, governance_outcome, reasoning, denial_reason, override_reason, target, payload)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+          [attempt.goalId, attempt.tickId, attempt.goalTickId, attempt.actionType, attempt.idempotencyKey, attempt.governanceOutcome, attempt.reasoning, attempt.denialReason, attempt.overrideReason, JSON.stringify(attempt.target), attempt.payload ? JSON.stringify(attempt.payload) : null],
+        );
+        return { kind: "inserted", attemptId: rows[0].id as string };
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes("proactivity_attempts_idempotency_key_key")) {
+          const { rows } = await query(
+            "SELECT id, governance_outcome FROM proactivity_attempts WHERE idempotency_key = $1",
+            [attempt.idempotencyKey],
+          );
+          return { kind: "idempotency_conflict", prior: { attemptId: rows[0].id as string, outcome: rows[0].governance_outcome } };
+        }
+        throw err;
+      }
+    },
+
+    async markAttemptCompleted(attemptId, overrides) {
+      if (overrides) {
+        await query("UPDATE proactivity_attempts SET completed_at = now(), target = target || $2 WHERE id = $1", [attemptId, JSON.stringify(overrides)]);
+      } else {
+        await query("UPDATE proactivity_attempts SET completed_at = now() WHERE id = $1", [attemptId]);
+      }
+    },
+
+    async markAttemptFailed(attemptId, error) {
+      await query("UPDATE proactivity_attempts SET error = $2 WHERE id = $1", [attemptId, error]);
+    },
+
+    async listAttempts(tickId) {
+      const { rows } = await query("SELECT * FROM proactivity_attempts WHERE tick_id = $1 ORDER BY attempted_at", [tickId]);
+      return rows.map(toAttempt);
+    },
+
+    async getRecentAttempts(entityId, opts) {
+      const { rows } = await query(
+        `SELECT a.* FROM proactivity_attempts a
+         JOIN proactivity_ticks t ON a.tick_id = t.id
+         WHERE t.entity_id = $1
+           AND t.tick_number > (SELECT COALESCE(MAX(tick_number), 0) - $2 FROM proactivity_ticks WHERE entity_id = $1)
+         ORDER BY a.attempted_at`,
+        [entityId, opts.tickWindow],
+      );
+      return rows.map(toAttempt);
+    },
+
+    async listSchedulableEntities() {
+      const { rows } = await query(
+        "SELECT * FROM proactivity_state WHERE enabled = true AND next_scheduled_tick_at IS NOT NULL",
+      );
+      return rows.map(toEntityState);
+    },
+
+    async migrate() {
+      const migrationDir = join(dirname(fileURLToPath(import.meta.url)), "../../migrations");
+      const sql = readFileSync(join(migrationDir, "001_initial.sql"), "utf-8");
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        // Create migrations table if needed (idempotent)
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS proactivity_migrations (
+            id serial PRIMARY KEY,
+            name varchar NOT NULL UNIQUE,
+            applied_at timestamptz NOT NULL DEFAULT now()
+          )
+        `);
+        const { rows } = await client.query("SELECT name FROM proactivity_migrations WHERE name = $1", ["001_initial"]);
+        if (rows.length === 0) {
+          await client.query(sql);
+          await client.query("INSERT INTO proactivity_migrations (name) VALUES ($1)", ["001_initial"]);
+        }
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+
+    async end() {
+      await pool.end();
+    },
+  };
 };
