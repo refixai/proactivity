@@ -1,4 +1,3 @@
-import { deriveIdempotencyKey } from "./idempotency.js";
 import type { Ledger } from "./ledger.js";
 import type {
   DispatchRequest,
@@ -7,6 +6,17 @@ import type {
   GovernanceHandle,
   ProactivityStore,
 } from "./types.js";
+
+// Canonical key for an action: same action + target + tick collapses to one
+// attempt, so a re-run within a tick is idempotent rather than double-fired.
+const deriveIdempotencyKey = (parts: {
+  actionType: string;
+  target: Record<string, unknown>;
+  tickId: string;
+}): string => {
+  const sortedTarget = JSON.stringify(parts.target, Object.keys(parts.target).sort());
+  return `${parts.actionType}:${sortedTarget}:${parts.tickId}`;
+};
 
 export const createGovernance = (
   config: GovernanceConfig,

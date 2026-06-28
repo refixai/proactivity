@@ -1,6 +1,6 @@
 export { createTestStore } from "../memory/index.js";
 export { createScheduler, type Scheduler } from "./scheduler.js";
-export { createBriefing, type BriefingAssembler } from "./briefing.js";
+export { assembleBriefing } from "./briefing.js";
 export { createHeartbeat, createPlanActHeartbeat, type Heartbeat } from "./heartbeat.js";
 
 export type {
