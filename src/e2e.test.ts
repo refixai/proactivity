@@ -132,6 +132,41 @@ describe("E2E: single-loop heartbeat with scheduler", () => {
     expect(results[2].denialReason).toContain("Per-tick cap");
   });
 
+  test("distinct nested targets are not collapsed into a duplicate", async () => {
+    // The idempotency key must distinguish targets by their full nested shape.
+    // A JSON.stringify replacer-array drops nested keys, collapsing different
+    // targets to one key and silently hard-denying the second as a duplicate.
+    const store = createTestStore();
+    await store.upsertState("t1", { enabled: true });
+
+    const results: DispatchResult[] = [];
+
+    const heartbeat = createHeartbeat({
+      store,
+      sources: [],
+      governance: { store, caps: { perPass: 5, perTick: 5 } },
+      cadence: { min: 1_000, max: 100_000, default: 10_000 },
+      tick: async (ctx) => {
+        for (const id of ["C1", "C2"]) {
+          results.push(await ctx.governance.dispatch({
+            goalId: "g1",
+            goalTickId: "gt1",
+            actionType: "send_message",
+            target: { channel: { id, type: "dm" } },
+            reasoning: "test",
+            perform: async () => {},
+          }));
+        }
+        return {};
+      },
+    });
+
+    await heartbeat.runTick("t1", "manual");
+
+    expect(results[0].governanceOutcome).toBe("taken");
+    expect(results[1].governanceOutcome).toBe("taken"); // not "hard_denied" duplicate
+  });
+
   test("scheduler start → triggerNow → reschedule cycle", async () => {
     vi.useFakeTimers();
     const store = createTestStore();
