@@ -85,14 +85,14 @@ Failures auto-recover: null cadence hint defaults to `cadence.default`, and `see
 Register data sources. Each receives a `BriefingBoundary` with a `deltaCutoff` timestamp — "what's new since last tick."
 
 ```typescript
-import { createBriefing } from '@refixai/proactivity'
-
-const briefing = createBriefing([
+const sources = [
   { name: 'newUsers', load: async (boundary) => db.users.since(boundary.deltaCutoff) },
   { name: 'openTickets', load: async () => db.tickets.where({ status: 'open' }) },
-])
+]
 
-// Sources run in parallel. Result is { newUsers: [...], openTickets: [...] }
+// Pass `sources` to your heartbeat config. Each tick runs them in parallel
+// against that tick's boundary — assembleBriefing(sources, boundary) —
+// producing { newUsers: [...], openTickets: [...] }.
 ```
 
 ### Goal Store — Durable Missions
@@ -158,6 +158,15 @@ const heartbeat = createPlanActHeartbeat({
 | `@refixai/proactivity/postgres` | Production store (raw SQL, ships migrations) | `pg` |
 | `@refixai/proactivity/bullmq` | Production scheduler (self-rescheduling) | `bullmq` |
 | `@refixai/proactivity/timer` | setTimeout scheduler for development | — |
+
+### Custom Stores
+
+The bundled Postgres store and `createTestStore` cover most needs, but the
+backend is a public extension point. Implement the `ProactivityStore` interface
+to persist to any database — the `Insert*` / `*Patch` types exported from the
+root are its method payloads. Likewise, implement `SchedulerAdapter` to drive
+the loop from a queue other than BullMQ. If you only use the bundled adapters,
+you never touch these types.
 
 ## Derived From Production
 
