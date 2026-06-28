@@ -259,36 +259,47 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
     },
 
     async applyGoalMutations(tickId, mutations: GoalMutation[]) {
-      const { rows: tickRows } = await query("SELECT entity_id FROM proactivity_ticks WHERE id = $1", [tickId]);
-      const entityId = tickRows[0]?.entity_id as string ?? "unknown";
+      // All-or-nothing: a mid-batch failure must not leave the portfolio half-mutated.
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const { rows: tickRows } = await client.query("SELECT entity_id FROM proactivity_ticks WHERE id = $1", [tickId]);
+        const entityId = tickRows[0]?.entity_id as string ?? "unknown";
 
-      for (const m of mutations) {
-        if (m.op === "create") {
-          const goalId = m.goalId ?? crypto.randomUUID();
-          await query(
-            `INSERT INTO proactivity_goals (id, entity_id, title, objective, done_condition, findings, next_actions, creation_reasoning, priority)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-            [goalId, entityId, m.title, m.objective ?? "", m.doneCondition ?? "", m.findings ?? "", m.nextActions ?? null, m.reasoning, m.priority ?? "medium"],
-          );
-        } else if (m.op === "update") {
-          const sets: string[] = ["updated_at = now()"];
-          const vals: unknown[] = [m.goalId];
-          let i = 2;
-          if (m.title !== undefined) { sets.push(`title = $${i++}`); vals.push(m.title); }
-          if (m.objective !== undefined) { sets.push(`objective = $${i++}`); vals.push(m.objective); }
-          if (m.doneCondition !== undefined) { sets.push(`done_condition = $${i++}`); vals.push(m.doneCondition); }
-          if (m.findings !== undefined) { sets.push(`findings = $${i++}`); vals.push(m.findings); }
-          if (m.nextActions !== undefined) { sets.push(`next_actions = $${i++}`); vals.push(m.nextActions); }
-          if (m.priority !== undefined) { sets.push(`priority = $${i++}`); vals.push(m.priority); }
-          await query(`UPDATE proactivity_goals SET ${sets.join(", ")} WHERE id = $1`, vals);
-        } else if (m.op === "reprioritize") {
-          if (m.priority !== undefined) {
-            await query("UPDATE proactivity_goals SET priority = $2, updated_at = now() WHERE id = $1", [m.goalId, m.priority]);
+        for (const m of mutations) {
+          if (m.op === "create") {
+            const goalId = m.goalId ?? crypto.randomUUID();
+            await client.query(
+              `INSERT INTO proactivity_goals (id, entity_id, title, objective, done_condition, findings, next_actions, creation_reasoning, priority)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+              [goalId, entityId, m.title, m.objective ?? "", m.doneCondition ?? "", m.findings ?? "", m.nextActions ?? null, m.reasoning, m.priority ?? "medium"],
+            );
+          } else if (m.op === "update") {
+            const sets: string[] = ["updated_at = now()"];
+            const vals: unknown[] = [m.goalId];
+            let i = 2;
+            if (m.title !== undefined) { sets.push(`title = $${i++}`); vals.push(m.title); }
+            if (m.objective !== undefined) { sets.push(`objective = $${i++}`); vals.push(m.objective); }
+            if (m.doneCondition !== undefined) { sets.push(`done_condition = $${i++}`); vals.push(m.doneCondition); }
+            if (m.findings !== undefined) { sets.push(`findings = $${i++}`); vals.push(m.findings); }
+            if (m.nextActions !== undefined) { sets.push(`next_actions = $${i++}`); vals.push(m.nextActions); }
+            if (m.priority !== undefined) { sets.push(`priority = $${i++}`); vals.push(m.priority); }
+            await client.query(`UPDATE proactivity_goals SET ${sets.join(", ")} WHERE id = $1`, vals);
+          } else if (m.op === "reprioritize") {
+            if (m.priority !== undefined) {
+              await client.query("UPDATE proactivity_goals SET priority = $2, updated_at = now() WHERE id = $1", [m.goalId, m.priority]);
+            }
+          } else if (m.op === "complete" || m.op === "archive" || m.op === "pause") {
+            const status = m.op === "complete" ? "completed" : m.op === "archive" ? "archived" : "paused";
+            await client.query("UPDATE proactivity_goals SET status = $2, updated_at = now() WHERE id = $1", [m.goalId, status]);
           }
-        } else if (m.op === "complete" || m.op === "archive" || m.op === "pause") {
-          const status = m.op === "complete" ? "completed" : m.op === "archive" ? "archived" : "paused";
-          await query("UPDATE proactivity_goals SET status = $2, updated_at = now() WHERE id = $1", [m.goalId, status]);
         }
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
       }
     },
 
