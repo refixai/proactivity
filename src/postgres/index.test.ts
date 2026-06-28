@@ -133,6 +133,24 @@ describe("createPostgresStore", () => {
     expect(goals[0].status).toBe("active");
   });
 
+  test("applyGoalMutations rolls back the whole batch on a mid-batch failure", async () => {
+    const store = makeStore();
+    await store.upsertState("e1", { enabled: true });
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
+
+    // First create succeeds; the second reuses the same id → primary-key
+    // violation mid-batch. All-or-nothing means the first insert rolls back too.
+    const mutations: GoalMutation[] = [
+      { op: "create", goalId: "g-rollback", title: "A", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
+      { op: "create", goalId: "g-rollback", title: "B", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
+    ];
+
+    await expect(store.applyGoalMutations(tickId, mutations)).rejects.toThrow();
+
+    const goals = await store.listGoals("e1");
+    expect(goals).toHaveLength(0);
+  });
+
   test("applyGoalMutations updates, completes, archives goals", async () => {
     const store = makeStore();
     await store.upsertState("e1", { enabled: true });
