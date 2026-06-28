@@ -1,4 +1,4 @@
-import { createBriefing } from "./briefing.js";
+import { assembleBriefing } from "./briefing.js";
 import { clampCadence } from "./cadence.js";
 import { createGovernance } from "./governance.js";
 import { validateGoalMutations } from "./goals.js";
@@ -50,7 +50,7 @@ const prepareTick = async (
     deltaCutoff,
   };
 
-  const briefing = await createBriefing(sources).assemble(boundary);
+  const briefing = await assembleBriefing(sources, boundary);
   const goals = await store.listGoals(entityId, { status: ["active", "paused"] });
 
   return { tickId, tickNumber, boundary, briefing, goals };
