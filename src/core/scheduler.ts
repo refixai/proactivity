@@ -11,14 +11,17 @@ export type Scheduler = {
 export const createScheduler = (config: SchedulerConfig): Scheduler => {
   const { adapter, store, cadence, identity, onTick } = config;
 
-  // Entities with a live loop. Gates re-enqueue so stop() halts cleanly even if
-  // a tick is in flight. In-memory: re-seeded by seedFromStore() after restart.
-  // ponytail: single-process gate; multi-process scheduling needs a shared lock.
-  const active = new Set<string>();
-
   const fireAndReschedule = async (entityId: string, trigger: TickTrigger) => {
     const result = await onTick(entityId, trigger);
-    if (!active.has(entityId)) return; // stopped during the tick — don't re-arm
+    // Re-arm only if still enabled. stop() flips `enabled` in the shared store,
+    // so this is authoritative across replicas — a stop on any node halts the
+    // loop. The heartbeat never writes `enabled`, so an in-flight tick can't
+    // resurrect a stopped entity. (Firing itself is single-delivery via the
+    // adapter — BullMQ locks each job to one worker.)
+    // ponytail: read-then-enqueue isn't atomic — a stop racing this line lets at
+    // most one more tick fire before the next re-arm sees enabled=false.
+    const state = await store.getState(entityId);
+    if (!state?.enabled) return;
     const nextMs = clampCadence(result.nextCadenceMs, cadence);
     const jobId = identity(entityId);
     await adapter.enqueue({ entityId, delayMs: nextMs, jobId });
@@ -36,32 +39,30 @@ export const createScheduler = (config: SchedulerConfig): Scheduler => {
 
   return {
     async start(entityId) {
-      active.add(entityId);
       const jobId = identity(entityId);
       await adapter.enqueue({ entityId, delayMs: cadence.default, jobId });
       await store.upsertState(entityId, {
+        enabled: true,
         nextScheduledTickAt: new Date(Date.now() + cadence.default),
       });
     },
 
     async stop(entityId) {
-      active.delete(entityId);
       const jobId = identity(entityId);
       await adapter.remove(jobId);
-      await store.upsertState(entityId, { nextScheduledTickAt: null });
+      await store.upsertState(entityId, { enabled: false, nextScheduledTickAt: null });
     },
 
     async triggerNow(entityId) {
-      active.add(entityId);
       const jobId = identity(entityId);
       await adapter.remove(jobId);
+      await store.upsertState(entityId, { enabled: true });
       await fireAndReschedule(entityId, "manual");
     },
 
     async seedFromStore() {
       const entities = await store.listSchedulableEntities();
       for (const entity of entities) {
-        active.add(entity.entityId);
         const jobId = identity(entity.entityId);
         const delayMs = entity.nextScheduledTickAt
           ? Math.max(0, entity.nextScheduledTickAt.getTime() - Date.now())

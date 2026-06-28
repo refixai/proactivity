@@ -42,8 +42,8 @@ export const createBullMQAdapter = (config: BullMQAdapterConfig): BullMQAdapter 
         await job.remove();
       } catch {
         // ponytail: job is active (locked) — it auto-removes on completion
-        // (removeOnComplete) and the scheduler's gate blocks re-enqueue, so
-        // stop() still halts the loop. Nothing to do.
+        // (removeOnComplete) and the next re-arm reads enabled=false from the
+        // store, so stop() still halts the loop. Nothing to do.
       }
     },
 
