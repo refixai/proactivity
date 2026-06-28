@@ -68,6 +68,38 @@ describe("createScheduler", () => {
     vi.useRealTimers();
   });
 
+  test("a stop on another replica halts the loop even mid-tick", async () => {
+    // The authority for "should this keep ticking" is `enabled` in the shared
+    // store, not in-process memory. Simulate another replica issuing stop()
+    // (flipping enabled) while this tick runs: the loop must not re-arm.
+    vi.useFakeTimers();
+    const store = createTestStore();
+    const adapter = createTimerAdapter();
+    const onTick = vi.fn(async (): Promise<TickResult> => {
+      await store.upsertState("e1", { enabled: false });
+      return { tickId: "t1", status: "completed", goalsWorkedCount: 0, actionsTakenCount: 0, nextCadenceMs: 1_000 };
+    });
+
+    const scheduler = createScheduler({
+      adapter,
+      store,
+      cadence: makeCadenceConfig(),
+      identity: (id) => `job:${id}`,
+      onTick,
+    });
+
+    await store.upsertState("e1", { enabled: true });
+    await scheduler.start("e1");
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onTick).toHaveBeenCalledTimes(1);
+
+    // Re-arm must not have happened — advancing further fires nothing.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(onTick).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
   test("stop removes the scheduled job", async () => {
     const store = createTestStore();
     const adapter = createTimerAdapter();
