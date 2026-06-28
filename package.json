@@ -3,6 +3,18 @@
   "version": "0.1.0",
   "description": "Proactivity primitives for autonomous agents — scheduling, governance, goals, briefing",
   "type": "module",
+  "author": "Refix AI",
+  "homepage": "https://github.com/refixai/proactivity#readme",
+  "bugs": "https://github.com/refixai/proactivity/issues",
+  "keywords": [
+    "autonomous-agents",
+    "agent",
+    "scheduler",
+    "proactivity",
+    "heartbeat",
+    "governance",
+    "ai-agents"
+  ],
   "exports": {
     ".": {
       "types": "./dist/core/index.d.ts",
@@ -30,10 +42,11 @@
     "migrations"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
     "pg": ">=8.0.0",
@@ -60,6 +73,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/refixai/proactivity"
+    "url": "git+https://github.com/refixai/proactivity.git"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
