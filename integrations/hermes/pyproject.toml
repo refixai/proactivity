@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "proactivity-hermes"
+version = "0.1.0"
+description = "Proactive-agent governance, durable goals, and self-adjusting cadence for the Hermes agent framework — a @refixai/proactivity adapter."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+authors = [{ name = "Refix AI" }]
+keywords = ["hermes", "hermes-agent", "agent", "proactive", "governance", "refix", "proactivity"]
+# No runtime deps: stdlib sqlite3 only. `hermes-agent` is the host, not a
+# dependency — it is already present wherever this plugin loads.
+dependencies = []
+
+# Discovered by Hermes via this entry-point group; the value resolves to the
+# package module, which exposes `register(ctx)`.
+[project.entry-points."hermes_agent.plugins"]
+proactivity = "proactivity_hermes"
+
+[tool.hatch.build.targets.wheel]
+packages = ["proactivity_hermes"]
