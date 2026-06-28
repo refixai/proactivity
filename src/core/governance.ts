@@ -7,16 +7,27 @@ import type {
   ProactivityStore,
 } from "./types.js";
 
+// Recursively sort object keys so equal targets serialize identically
+// regardless of key order. A replacer-array on JSON.stringify won't do this —
+// it's an allowlist applied at every depth, so nested keys not present at the
+// top level get dropped and distinct nested targets collide.
+const canonicalize = (value: unknown): unknown =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? Object.fromEntries(
+        Object.keys(value as Record<string, unknown>)
+          .sort()
+          .map((k) => [k, canonicalize((value as Record<string, unknown>)[k])]),
+      )
+    : value;
+
 // Canonical key for an action: same action + target + tick collapses to one
 // attempt, so a re-run within a tick is idempotent rather than double-fired.
 const deriveIdempotencyKey = (parts: {
   actionType: string;
   target: Record<string, unknown>;
   tickId: string;
-}): string => {
-  const sortedTarget = JSON.stringify(parts.target, Object.keys(parts.target).sort());
-  return `${parts.actionType}:${sortedTarget}:${parts.tickId}`;
-};
+}): string =>
+  `${parts.actionType}:${JSON.stringify(canonicalize(parts.target))}:${parts.tickId}`;
 
 export const createGovernance = (
   config: GovernanceConfig,
