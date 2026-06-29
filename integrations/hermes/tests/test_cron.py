@@ -97,6 +97,24 @@ def test_recurring_tick_rearms_after_firing():
         "after re-arm the tick is scheduled forward, not immediately due again"
 
 
+def test_set_cadence_change_preserves_job_id():
+    # Changing cadence must UPDATE the one tick job in place, not drop+recreate it.
+    # A fresh id orphans an in-flight tick from the scheduler's post-run
+    # mark_job_run (the "job_id not found, skipping save" gap seen in the live loop).
+    _register()
+    registry.dispatch("set_cadence", {"schedule": "every 30m", "reasoning": "first"})
+    first = [j for j in load_jobs() if j.get("name") == _JOB]
+    assert len(first) == 1, first
+    first_id = first[0]["id"]
+
+    out = json.loads(registry.dispatch("set_cadence", {"schedule": "every 10m", "reasoning": "faster"}))
+    assert out.get("scheduled") is True, out
+    jobs = [j for j in load_jobs() if j.get("name") == _JOB]
+    assert len(jobs) == 1, f"must stay a single tick job, got {len(jobs)}"
+    assert jobs[0]["id"] == first_id, "cadence change must preserve the job id, not recreate it"
+    assert jobs[0]["schedule"].get("minutes") == 10, jobs[0]["schedule"]
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in tests:
