@@ -18,15 +18,20 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from tools.registry import registry, tool_result  # real Hermes
-except Exception:  # noqa: BLE001 — any import failure means Hermes isn't here
-    print("skip: Hermes not importable (set PYTHONPATH to a hermes-agent install)")
+    import hermes_cli  # noqa: F401 — base package; its absence is the only legit skip
+except Exception:  # noqa: BLE001
+    print("skip: hermes-agent not installed")
     sys.exit(0)
+
+# Hermes is installed, so a missing internal below is real version drift — let it
+# fail loud instead of masquerading as "Hermes not here" and silently skipping.
+from tools.registry import registry, tool_result
 
 
 def main():
     os.environ["HERMES_HOME"] = tempfile.mkdtemp()  # isolate the sqlite db
     os.environ["PROACTIVITY_PER_TICK_CAP"] = "2"
+    os.environ["PROACTIVITY_GOVERNED_TOOLS"] = "send_message"  # opt in: this test drives it
 
     import proactivity_hermes as plugin
 

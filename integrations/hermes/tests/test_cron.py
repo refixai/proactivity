@@ -21,12 +21,16 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from tools.registry import registry  # real Hermes
-    from cron.jobs import get_due_jobs, load_jobs, save_jobs
-    from cron.scheduler import _build_job_prompt
-except Exception:  # noqa: BLE001 — any import failure means Hermes isn't here
-    print("skip: Hermes not importable (set PYTHONPATH to a hermes-agent install)")
+    import hermes_cli  # noqa: F401 — base package; its absence is the only legit skip
+except Exception:  # noqa: BLE001
+    print("skip: hermes-agent not installed")
     sys.exit(0)
+
+# Hermes is installed, so a missing internal below is real version drift — let it
+# fail loud instead of masquerading as "Hermes not here" and silently skipping.
+from tools.registry import registry
+from cron.jobs import advance_next_run, get_due_jobs, load_jobs, save_jobs
+from cron.scheduler import _build_job_prompt
 
 import proactivity_hermes as plugin
 
@@ -71,6 +75,26 @@ def test_set_cadence_job_fires_when_due():
     except Exception:  # noqa: BLE001 — injection scan / skill load needs machinery we don't set up
         prompt = due[0].get("prompt", "")
     assert "briefing" in prompt and "set_cadence" in prompt, prompt[:200]
+
+
+def test_recurring_tick_rearms_after_firing():
+    # The loop only closes if the tick re-arms: once it fires, Hermes's at-most-once
+    # reschedule must push the next wake forward so it isn't immediately due again.
+    _register()
+    registry.dispatch("set_cadence", {"schedule": "every 30m", "reasoning": "test"})
+    jobs = load_jobs()
+    job_id = next(j["id"] for j in jobs if j.get("name") == _JOB)
+    for j in jobs:
+        if j["id"] == job_id:
+            j["next_run_at"] = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+    save_jobs(jobs)
+    assert any(j.get("name") == _JOB for j in get_due_jobs()), "tick must be due before it fires"
+
+    # Hermes's real at-most-once re-arm — the scheduler bumps next_run_at around run_job.
+    assert advance_next_run(job_id) is True, "recurring tick must re-arm"
+    assert len([j for j in load_jobs() if j.get("name") == _JOB]) == 1, "job persists across the tick"
+    assert not any(j.get("name") == _JOB for j in get_due_jobs()), \
+        "after re-arm the tick is scheduled forward, not immediately due again"
 
 
 if __name__ == "__main__":

@@ -17,12 +17,16 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from tools.registry import tool_result  # real Hermes
-    from hermes_cli.plugins import get_plugin_manager
-    from hermes_cli.middleware import run_tool_execution_middleware
-except Exception:  # noqa: BLE001 — any import failure means Hermes isn't here
-    print("skip: Hermes not importable (set PYTHONPATH to a hermes-agent install)")
+    import hermes_cli  # noqa: F401 — base package; its absence is the only legit skip
+except Exception:  # noqa: BLE001
+    print("skip: hermes-agent not installed")
     sys.exit(0)
+
+# Hermes is installed, so a missing internal below is real version drift — let it
+# fail loud instead of masquerading as "Hermes not here" and silently skipping.
+from tools.registry import tool_result
+from hermes_cli.plugins import get_plugin_manager
+from hermes_cli.middleware import run_tool_execution_middleware
 
 import proactivity_hermes as plugin
 
@@ -53,7 +57,7 @@ def _register(**env):
 def test_override_reason_is_honored():
     # The soft cap tells the agent to "supply override_reason to proceed" — the
     # middleware threads it from the tool args so that advice is actionable.
-    mw = _register(PROACTIVITY_RECENT_CONTACT_THRESHOLD=1)
+    mw = _register(PROACTIVITY_RECENT_CONTACT_THRESHOLD=1, PROACTIVITY_GOVERNED_TOOLS="send_message")
     sends = []
     nxt = lambda a: (sends.append(a), tool_result(sent=True))[1]  # noqa: E731
     send = lambda args: json.loads(mw(tool_name="send_message", args=args, next_call=nxt))  # noqa: E731
@@ -96,7 +100,7 @@ def test_fail_open_does_not_double_send():
     original = SqliteStore.mark_attempt_completed
     SqliteStore.mark_attempt_completed = _raise_disk_error
     try:
-        mw = _register()
+        mw = _register(PROACTIVITY_GOVERNED_TOOLS="send_message")
         get_plugin_manager()._middleware["tool_execution"] = [mw]  # exactly our callback
         sends = []
         run_tool_execution_middleware(
@@ -108,6 +112,70 @@ def test_fail_open_does_not_double_send():
     finally:
         SqliteStore.mark_attempt_completed = original
         get_plugin_manager()._middleware.pop("tool_execution", None)
+
+
+def test_governs_a_real_agent_callable_tool():
+    # The default "send_message" is a placeholder stock Hermes never exposes to the
+    # model. `discord` IS a registered agent-callable tool (it can POST) — the kind a
+    # user should actually govern. Prove the cap fires on the REAL tool name.
+    import tools.discord_tool  # noqa: F401 — registers the real `discord` tool
+    from tools.registry import registry
+
+    assert "discord" in registry.get_all_tool_names(), "discord must be a real agent tool"
+    mw = _register(PROACTIVITY_GOVERNED_TOOLS="discord", PROACTIVITY_PER_TICK_CAP=1)
+    sends = []
+    nxt = lambda a: (sends.append(a), tool_result(ok=True))[1]  # noqa: E731
+    call = lambda args: json.loads(mw(tool_name="discord", args=args, next_call=nxt))  # noqa: E731
+
+    assert call({"action": "create_message", "channel_id": "c1", "message": "hi"}).get("ok")
+    capped = call({"action": "create_message", "channel_id": "c1", "message": "again"})
+    assert capped.get("error") and "cap" in capped["error"].lower(), capped
+    assert len(sends) == 1, sends
+
+
+def test_phantom_governed_tool_warns():
+    # Governing a name the agent can't call (the "send_message" default) would
+    # silently do nothing; the middleware must say so out loud on the first tool flow.
+    import logging
+    import tools.discord_tool  # noqa: F401 — a populated registry makes the check real
+    from tools.registry import registry
+
+    assert "send_message" not in registry.get_all_tool_names(), "send_message is a phantom"
+    seen = []
+    handler = logging.Handler()
+    handler.emit = lambda record: seen.append(record.getMessage())  # noqa: E731
+    log = logging.getLogger("proactivity")
+    log.addHandler(handler)
+    log.setLevel(logging.WARNING)
+    try:
+        mw = _register(PROACTIVITY_GOVERNED_TOOLS="send_message")
+        # read_file isn't governed; any tool flow triggers the one-shot phantom check.
+        mw(tool_name="read_file", args={"path": "/x"}, next_call=lambda a: tool_result(ok=True))
+        assert any("send_message" in m and "not registered" in m for m in seen), seen
+    finally:
+        log.removeHandler(handler)
+
+
+def test_distinct_goal_ops_are_not_false_duplicates():
+    # Regression: the middleware used to build the idempotency target from a fixed
+    # ("target","to","channel","action","message") key set. The `goal` tool carries
+    # NONE of those, so every goal op in a tick collapsed to the same key `goal:{}:tick`
+    # and the 2nd distinct goal was falsely hard_denied as a duplicate. The target now
+    # reflects the action's real identity, so distinct ops stay distinct.
+    mw = _register(PROACTIVITY_GOVERNED_TOOLS="goal", PROACTIVITY_PER_TICK_CAP=5)
+    taken = []
+    nxt = lambda a: (taken.append(a), tool_result(ok=True))[1]  # noqa: E731
+    op = lambda args: json.loads(mw(tool_name="goal", args=args, next_call=nxt))  # noqa: E731
+
+    assert op({"op": "create", "title": "Goal A", "reasoning": "a"}).get("ok")
+    second = op({"op": "create", "title": "Goal B", "reasoning": "b"})
+    assert second.get("ok"), f"distinct goal must not be a false duplicate: {second}"
+    assert len(taken) == 2, taken
+
+    # A genuine exact retry within the tick is still deduped (identity unchanged).
+    dup = op({"op": "create", "title": "Goal A", "reasoning": "a"})
+    assert dup.get("governance") == "hard_denied", dup
+    assert len(taken) == 2, "exact retry must not perform again"
 
 
 if __name__ == "__main__":
