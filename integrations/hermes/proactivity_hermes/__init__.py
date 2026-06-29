@@ -53,7 +53,7 @@ def _recent_contact_cap(threshold: int):
 
 
 def register(ctx) -> None:
-    from tools.registry import tool_error
+    from tools.registry import registry, tool_error
 
     from .governance import DispatchRequest, Governance
     from .store import SqliteStore
@@ -71,9 +71,12 @@ def register(ctx) -> None:
     tick_seconds = _env_int("PROACTIVITY_TICK_SECONDS", 60)
     contact_threshold = _env_int("PROACTIVITY_RECENT_CONTACT_THRESHOLD", 2)
     dry_run = os.environ.get("PROACTIVITY_DRY_RUN", "").lower() in ("1", "true", "yes")
+    # Opt-in: with nothing named, the plugin still gives you goals + cadence but wraps
+    # none of the agent's tools. Name your real outbound tools (e.g. "discord") to turn
+    # the envelope on — there is no safe default, since only you know which tool sends.
     governed = {
         t.strip()
-        for t in os.environ.get("PROACTIVITY_GOVERNED_TOOLS", "send_message").split(",")
+        for t in os.environ.get("PROACTIVITY_GOVERNED_TOOLS", "").split(",")
         if t.strip()
     }
 
@@ -101,7 +104,28 @@ def register(ctx) -> None:
         description=SET_CADENCE_SCHEMA["description"],
     )
 
+    # Surface the most common footgun: you named a governed tool that isn't actually
+    # an agent-callable tool (a typo, or "send_message" — which stock Hermes
+    # deliberately does NOT expose to the model), so governance over it silently never
+    # fires. Checked lazily on the first tool flow, not at register() time: plugins
+    # can load before the core tools register, so the registry is still empty up here.
+    # ponytail: one-shot per registration; a tool registered after the first flow
+    # won't be seen, but it also can't have been called yet.
+    checked = {"done": False}
+
     def governance_middleware(*, tool_name, args, next_call, **_):
+        if not checked["done"]:
+            checked["done"] = True
+            phantom = sorted(t for t in governed if t not in set(registry.get_all_tool_names()))
+            if phantom:
+                logger.warning(
+                    "proactivity: governed tool(s) %s are not registered agent-callable "
+                    "tools, so governance over them never fires. Point "
+                    "PROACTIVITY_GOVERNED_TOOLS at tools your agent can call (see "
+                    "`hermes tools list`).",
+                    phantom,
+                )
+
         # Only wrap the outbound tools we govern; everything else passes straight through.
         if tool_name not in governed:
             return next_call(args)
@@ -114,7 +138,11 @@ def register(ctx) -> None:
         tick_id = str(int(time.time() // tick_seconds))
         request = DispatchRequest(
             action_type=tool_name,
-            target={k: args[k] for k in ("target", "to", "channel", "action", "message") if k in args},
+            # The idempotency target must capture the action's real identity, not a
+            # fixed key subset — `goal`/`briefing` carry none of those keys, so they'd
+            # all collapse to one key per tick and the 2nd distinct op would be a false
+            # "duplicate". reasoning/override_reason are control fields, not identity.
+            target={k: v for k, v in args.items() if k not in ("reasoning", "override_reason")},
             payload=args,
             perform=lambda: next_call(args),
             # Honour an agent-supplied override so the soft cap's "supply
@@ -139,7 +167,8 @@ def register(ctx) -> None:
             result.denial_reason or "blocked by proactivity governance", governance=result.outcome
         )
 
-    ctx.register_middleware("tool_execution", governance_middleware)
+    if governed:
+        ctx.register_middleware("tool_execution", governance_middleware)
     logger.info(
         "proactivity registered: entity=%s per_tick=%s governed=%s dry_run=%s",
         entity_id, per_tick, sorted(governed), dry_run,
