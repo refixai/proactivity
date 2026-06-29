@@ -121,7 +121,7 @@ _TICK_PROMPT = (
 
 
 def set_cadence_handler(args, **_):
-    from cron.jobs import create_job, load_jobs, parse_schedule, save_jobs
+    from cron.jobs import create_job, load_jobs, parse_schedule, update_job
 
     schedule = (args.get("schedule") or "").strip()
     if not schedule:
@@ -131,11 +131,15 @@ def set_cadence_handler(args, **_):
     except Exception as exc:  # noqa: BLE001 — parse_schedule raises ValueError on bad input
         return tool_error(f"Invalid schedule '{schedule}': {exc}")
 
-    # Upsert one tick job: drop any existing proactivity tick, then create fresh,
-    # so adjusting cadence never spawns duplicate jobs.
-    remaining = [j for j in load_jobs() if j.get("name") != _PROACTIVITY_JOB_NAME]
-    save_jobs(remaining)
-    job = create_job(prompt=_TICK_PROMPT, schedule=schedule, name=_PROACTIVITY_JOB_NAME)
+    # Update the one tick job's schedule IN PLACE so a cadence change keeps the job
+    # id (and run history). A drop+recreate hands back a new id, which orphans an
+    # in-flight tick from the scheduler's post-run mark_job_run. Create only if none
+    # exists yet — set_cadence is the sole creator, so there's never more than one.
+    existing = next((j for j in load_jobs() if j.get("name") == _PROACTIVITY_JOB_NAME), None)
+    if existing:
+        job = update_job(existing["id"], {"schedule": schedule})
+    else:
+        job = create_job(prompt=_TICK_PROMPT, schedule=schedule, name=_PROACTIVITY_JOB_NAME)
     return tool_result(
         scheduled=True,
         schedule=job.get("schedule_display", schedule),
