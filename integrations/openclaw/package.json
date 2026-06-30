@@ -1,0 +1,42 @@
+{
+  "name": "@refixai/proactivity-openclaw",
+  "version": "0.1.0",
+  "description": "Governance, durable goals, and cadence for a proactive OpenClaw agent — a @refixai/proactivity plugin.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Refix AI",
+  "main": "./dist/index.js",
+  "exports": { ".": "./dist/index.js" },
+  "files": ["dist", "openclaw.plugin.json"],
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "openclaw": {
+    "extensions": ["./dist/index.js"],
+    "runtimeExtensions": ["./dist/index.js"],
+    "install": {
+      "npmSpec": "@refixai/proactivity-openclaw",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.6.10"
+    },
+    "compat": { "pluginApi": ">=2026.6.10" },
+    "build": { "openclawVersion": "2026.6.10" },
+    "release": { "publishToClawHub": false, "publishToNpm": true }
+  },
+  "dependencies": {
+    "@refixai/proactivity": "file:../..",
+    "typebox": "^1.1.39"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.6.10"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "openclaw": "2026.6.10",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  }
+}

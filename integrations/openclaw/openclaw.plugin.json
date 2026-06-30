@@ -1,0 +1,21 @@
+{
+  "id": "proactivity",
+  "name": "Proactivity",
+  "description": "Governance envelope, durable goals, and cadence for a proactive OpenClaw agent.",
+  "activation": { "onStartup": true },
+  "contracts": { "tools": ["goal", "briefing", "set_cadence"] },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "perTickCap": { "type": "number", "default": 5, "description": "Max governed actions per tick bucket before further ones are denied." },
+      "governedTools": { "type": "array", "items": { "type": "string" }, "description": "Tool names to gate via before_tool_call. Outbound messages are always governed." },
+      "tickSeconds": { "type": "number", "default": 60, "description": "Width of a tick bucket in seconds — the scope of the per-tick cap and idempotency." },
+      "recentContactThreshold": { "type": "number", "default": 3, "description": "Soft-cap: hold a send after this many recent contacts to the same recipient." },
+      "dryRun": { "type": "boolean", "default": false, "description": "Record actions as pending instead of allowing them." },
+      "sessionKey": { "type": "string", "description": "Session to route proactive cron ticks into (for set_cadence)." },
+      "entityId": { "type": "string", "default": "openclaw", "description": "Governance scope; leave as-is for a single personal agent." },
+      "dbPath": { "type": "string", "description": "Path to the JSON store (default ~/.openclaw/proactivity.json)." }
+    },
+    "additionalProperties": false
+  }
+}
