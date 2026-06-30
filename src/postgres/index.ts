@@ -159,6 +159,7 @@ const toAttempt = (row: Record<string, unknown>): ActionAttempt => ({
 
 export const createPostgresStore = (config: PostgresStoreConfig): ProactivityStore & { end: () => Promise<void> } => {
   const pool = "pool" in config ? config.pool : new pg.Pool({ connectionString: config.connectionString });
+  const ownsPool = !("pool" in config);
 
   const query = (text: string, values?: unknown[]) => pool.query(text, values);
 
@@ -402,7 +403,9 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
     },
 
     async end() {
-      await pool.end();
+      // Only close the pool we created. A caller-owned pool ({ pool }) is
+      // theirs to manage; closing it here would kill a connection they still use.
+      if (ownsPool) await pool.end();
     },
   };
 };

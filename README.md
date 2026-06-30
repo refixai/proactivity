@@ -225,6 +225,28 @@ const heartbeat = createPlanActHeartbeat({
 | `@refixai/proactivity/timer` | setTimeout scheduler for development | none |
 | `@refixai/proactivity/prompts` | Tick / planner / executor prompt builders | none |
 
+### Postgres store
+
+`createPostgresStore` takes either a connection string or a `pg.Pool` you
+already have, so it can share your app's existing connection:
+
+```typescript
+import { createPostgresStore } from '@refixai/proactivity/postgres'
+
+// Pass a connection string (the SDK creates and owns the pool)...
+const store = createPostgresStore({ connectionString: process.env.DATABASE_URL })
+
+// ...or a pg.Pool you already have:
+const store = createPostgresStore({ pool: myPool })
+
+await store.migrate() // idempotent; safe to run on every boot
+```
+
+`migrate()` creates `proactivity_*`-prefixed tables in whatever database and
+`search_path` the connection points at, so they sit alongside your own tables.
+`store.end()` closes the pool only when the SDK created it; a pool you passed in
+is yours to manage.
+
 ### Custom stores
 
 The bundled Postgres store and `createTestStore` cover most needs, but the

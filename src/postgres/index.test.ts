@@ -36,6 +36,17 @@ afterAll(async () => {
 });
 
 describe("createPostgresStore", () => {
+  test("end() leaves a caller-owned pool open but closes an SDK-created one", async () => {
+    // Borrowed pool: end() must be a no-op so the caller's pool keeps working.
+    await createPostgresStore({ pool }).end();
+    await expect(pool.query("SELECT 1")).resolves.toBeDefined();
+
+    // SDK-created pool: end() closes it, so further queries reject.
+    const owned = createPostgresStore({ connectionString: CONNECTION_STRING });
+    await owned.end();
+    await expect(owned.getState("e1")).rejects.toThrow();
+  });
+
   // --- Entity State ---
 
   test("upsertState creates and updates entity", async () => {
