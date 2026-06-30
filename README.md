@@ -8,6 +8,35 @@ Every team deploying an autonomous agent rebuilds the same infrastructure: idemp
 
 LangGraph, CrewAI, and other frameworks give you the reasoning loop. This gives you everything around it.
 
+## How the loop runs
+
+An agent built on this SDK runs itself. You wire it up once, call `scheduler.start(entityId)`, and from then on it wakes on its own schedule, decides what to do, acts, and chooses when to wake next. Four pieces make that work:
+
+- The **scheduler** is the clock. It wakes the agent, and after each wake it re-arms itself for the next one. This is the piece that makes the agent proactive instead of waiting for a request.
+- The **heartbeat** is a single wake, called a tick. Each tick gathers fresh context, loads the agent's goals, and hands both to your reasoning loop (LangGraph, a raw LLM call, whatever you use).
+- The **goal store** is memory. Goals persist across ticks, so the agent pursues missions it set earlier instead of starting from nothing each time.
+- The **governance envelope** is the seatbelt. Every side effect, an email or a Slack message, passes through it so the agent cannot double-send or exceed the limits you set.
+
+```
+  scheduler.start(entity)
+        |
+        |   (repeats on its own)
+        v
+  +-----------------------------------------+
+  | WAKE (one tick)                         |
+  |   1. gather a briefing (what changed)   |
+  |   2. load goals                         |
+  |   3. your agent reasons on both         |
+  |   4. governance.dispatch() each action  |
+  |   5. return "wake me again in N min"    |
+  +-----------------------------------------+
+        |
+        v
+  scheduler waits N min, then wakes again
+```
+
+Most of this README is about governance because it has the most surface area, but governance never starts anything. The scheduler and the heartbeat are what make the agent act on its own.
+
 ## Install
 
 ```bash
@@ -23,92 +52,136 @@ pnpm add bullmq    # for @refixai/proactivity/bullmq
 
 ## Quick start
 
-```typescript
-import { createHeartbeat, createTestStore } from '@refixai/proactivity'
-import { buildTickPrompt } from '@refixai/proactivity/prompts'
+The smallest agent that runs itself. It needs no database and no Redis: the
+in-memory store and the timer adapter run entirely in-process. Swap in
+`createPostgresStore` and `createBullMQAdapter` for production.
 
-const store = createTestStore() // in-memory, for dev/tests; use createPostgresStore for production
+```typescript
+import { createHeartbeat, createScheduler, createTestStore } from '@refixai/proactivity'
+import { createTimerAdapter } from '@refixai/proactivity/timer'
+
+const store = createTestStore()
+
+// Tiny cadence so you can watch it loop in real time. Real agents use 15
+// minutes to 24 hours.
+const cadence = { min: 2_000, max: 60_000, default: 5_000 }
+
+// A stand-in data source. It reports one new signup on the first wake, then
+// goes quiet, so you can watch the agent speed up and then back off.
+const pendingSignups = ['u_alice']
 
 const heartbeat = createHeartbeat({
   store,
-  cadence: { min: 15 * 60_000, max: 24 * 60 * 60_000, default: 60 * 60_000 },
+  cadence,
+  sources: [{ name: 'newSignups', load: async () => pendingSignups.splice(0) }],
   governance: { store, caps: { perPass: 3, perTick: 10 } },
-  tick: async ({ briefing, goals, governance, boundary }) => {
-    // 1. Turn this tick's state into a prompt (or assemble your own).
-    const prompt = buildTickPrompt({
-      briefing, goals,
-      entityId: boundary.entityId,
-      tickNumber: boundary.tickNumber,
-    })
+  tick: async ({ briefing, boundary }) => {
+    const newSignups = (briefing.newSignups as string[]) ?? []
+    console.log(`wake #${boundary.tickNumber}: ${newSignups.length} new signup(s)`)
 
-    // 2. Hand it to your reasoning loop. See "Framework patterns" below.
-    const plan = await yourAgent(prompt)
-
-    // 3. Route every side effect through governance: it dedupes, enforces
-    //    the caps, and records each attempt. goalId/goalTickId tie the
-    //    action to the goal it advances (see "Framework patterns").
-    for (const action of plan.actions) {
-      await governance.dispatch({
-        goalId: action.goalId,
-        goalTickId: action.goalTickId,
-        actionType: action.type,
-        target: action.target,
-        reasoning: action.reasoning,
-        perform: async () => { await action.run() },
-      })
-    }
-
-    return { cadenceHint: plan.cadenceHint }
+    // The agent sets its own next wake: busy now, look again soon; quiet, back off.
+    return newSignups.length > 0
+      ? { cadenceHint: { nextTickMs: 2_000, reasoning: 'activity, stay close' } }
+      : { cadenceHint: { nextTickMs: 15_000, reasoning: 'quiet, back off' } }
   },
 })
 
-const result = await heartbeat.runTick('entity-1', 'manual')
+const scheduler = createScheduler({
+  adapter: createTimerAdapter(),
+  store,
+  cadence,
+  identity: (entityId) => `heartbeat:${entityId}`,
+  onTick: (entityId, trigger) => heartbeat.runTick(entityId, trigger),
+})
+
+// The only call you make. The agent wakes itself from here until you stop it.
+await scheduler.start('workspace-1')
+// ...later: await scheduler.stop('workspace-1')
 ```
 
-## Framework patterns
+This tick only reads and logs. To make the agent actually do something, the next
+section wires in your reasoning loop and routes its actions through governance.
 
-The SDK is the scaffolding; your reasoning loop lives inside `tick`. Whatever
-framework you use, the seam is the same: build a prompt from the tick context,
-then route every side effect through `governance.dispatch`. `goalId` is the goal
-an action advances; get a `goalTickId` for it with
+## Plugging in your agent
+
+A real tick hands the context to your reasoning loop and routes whatever it
+decides to do through governance. The seam is the same in every framework:
+
+1. Build a prompt from the tick context with `buildTickPrompt` (or assemble your own).
+2. Run your agent on it.
+3. Route every side effect through `governance.dispatch`.
+
+`dispatch` needs to know which goal an action advances. `goalId` is that goal;
+`goalTickId` records this tick's work on it, which you open with
 `store.insertGoalTick({ goalId, tickId: boundary.tickId, orderIndex: 0 })`.
-(Plan/Act mode does that bookkeeping for you.)
+(Plan/Act mode does this bookkeeping for you.)
 
 There are two shapes, depending on whether the framework calls tools itself.
 
-### LangGraph / Vercel AI SDK (governed tool)
+### LangGraph or Vercel AI SDK: govern the tool
 
 The model calls tools, so wrap each side-effecting tool to dispatch through
-governance, binding the current `goalId`/`goalTickId` when you build it:
+governance. Bind the current `goalId` and `goalTickId` when you build the tool,
+then hand it to your graph:
 
 ```typescript
-const sendEmail = (governance, goalId, goalTickId) => ({
-  name: 'send_email',
-  func: async ({ userId, body }) => {
-    const { governanceOutcome } = await governance.dispatch({
-      goalId, goalTickId,
-      actionType: 'send_email',
-      target: { userId },
-      reasoning: `Email ${userId}`,
-      perform: async () => { await mailer.send(userId, body) },
-    })
-    return governanceOutcome // governance's verdict, surfaced back to the model
-  },
-})
+import { tool } from '@langchain/core/tools'
+import { createReactAgent } from '@langchain/langgraph/prebuilt'
+import { ChatOpenAI } from '@langchain/openai'
+import { buildTickPrompt } from '@refixai/proactivity/prompts'
+import { z } from 'zod'
+
+// ...as the `tick` of your createHeartbeat config:
+tick: async ({ briefing, goals, governance, boundary }) => {
+  const goal = goals[0]
+  if (!goal) return { cadenceHint: { nextTickMs: 60 * 60_000, reasoning: 'no goals yet' } }
+
+  // Open a goal-tick so each action is tied to the goal it advances.
+  const goalTickId = await store.insertGoalTick({
+    goalId: goal.id, tickId: boundary.tickId, orderIndex: 0,
+  })
+
+  // The model calls send_email; the side effect routes through governance.
+  // Returning the outcome lets the model see "taken" or "hard_denied" and re-plan.
+  const sendEmail = tool(
+    async ({ userId, body }) => {
+      const { governanceOutcome } = await governance.dispatch({
+        goalId: goal.id, goalTickId,
+        actionType: 'send_email',
+        target: { userId },
+        reasoning: `Email ${userId}`,
+        perform: async () => { await mailer.send(userId, body) },
+      })
+      return governanceOutcome
+    },
+    {
+      name: 'send_email',
+      description: 'Email a user',
+      schema: z.object({ userId: z.string(), body: z.string() }),
+    },
+  )
+
+  const agent = createReactAgent({ llm: new ChatOpenAI({ model: 'gpt-4o' }), tools: [sendEmail] })
+  await agent.invoke({
+    messages: [{ role: 'user', content: buildTickPrompt({
+      briefing, goals, entityId: boundary.entityId, tickNumber: boundary.tickNumber,
+    }) }],
+  })
+
+  return { cadenceHint: { nextTickMs: 30 * 60_000, reasoning: 'follow up soon' } }
+}
 ```
 
-Build the tool inside `tick`, hand it to your graph or `generateText`, and the
-model's tool calls are governed transparently.
+### OpenAI, Anthropic, or Mastra: parse, then dispatch
 
-### OpenAI / Anthropic / Mastra (parse, then dispatch)
-
-The model returns structured actions; loop over them and dispatch each:
+The model returns structured actions instead of calling tools. Loop over them
+and dispatch each:
 
 ```typescript
 const plan = await model.respond(prompt) // your SDK call
 for (const action of plan.actions) {
   await governance.dispatch({
-    goalId, goalTickId,
+    goalId: goal.id, goalTickId,
     actionType: action.actionType,
     target: action.target,
     reasoning: action.reasoning,
@@ -119,7 +192,7 @@ return { cadenceHint: plan.cadenceHint }
 ```
 
 Either shape gets the caps, idempotency, and audit trail for free. Runnable
-versions of all five frameworks live in
+versions of both, across five frameworks, live in
 [`src/integrations.test.ts`](src/integrations.test.ts).
 
 ## Core primitives
@@ -208,9 +281,17 @@ const heartbeat = createPlanActHeartbeat({
     skippedGoals: [],
     cadenceHint: { nextTickMs: 30 * 60_000, reasoning: 'Active signals detected' },
   }),
-  executor: async ({ goal, governance }) => {
-    // Work on a single goal. Use governance.dispatch() for side effects.
-    return { acted: true, summary: 'Sent follow-up messages to 3 users' }
+  executor: async ({ goal, goalTickId, governance }) => {
+    // Work on a single goal. The goal-tick is already open, so route side
+    // effects straight through governance.
+    const { governanceOutcome } = await governance.dispatch({
+      goalId: goal.id, goalTickId,
+      actionType: 'send_follow_up',
+      target: { goalId: goal.id },
+      reasoning: 'Following up on this goal',
+      perform: async () => { /* ...send the messages... */ },
+    })
+    return { acted: governanceOutcome === 'taken', summary: 'Sent follow-up' }
   },
 })
 ```
