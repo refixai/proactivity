@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Governance, durable goals, and cadence for a proactive OpenClaw agent — a @refixai/proactivity plugin.",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "Refix AI",
   "main": "./dist/index.js",
   "exports": { ".": "./dist/index.js" },
