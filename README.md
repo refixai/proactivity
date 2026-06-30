@@ -4,9 +4,11 @@ Proactivity primitives for autonomous agents. Scheduling, governance, goals, and
 
 ## The problem
 
-Every team deploying an autonomous agent rebuilds the same infrastructure: idempotency guards after the first spam incident, rate limiting after the first runaway loop, crash-safe scheduling after the first lost job, audit trails after the first "what did the agent do?" question.
+Frameworks like LangGraph and CrewAI give you a reasoning loop: you call it, it thinks, it returns. That is a reactive agent. A proactive one runs on its own. It wakes on its own schedule, notices what changed since it last looked, pursues goals it set earlier, and decides its own pace. None of that comes with the reasoning loop.
 
-LangGraph, CrewAI, and other frameworks give you the reasoning loop. This gives you everything around it.
+And the moment an agent runs on its own, it needs guardrails, or you rebuild them one incident at a time: idempotency after the first spam, rate caps after the first runaway loop, crash-safe scheduling after the first lost job, an audit trail after the first "what did it do?"
+
+This gives you both: the loop that makes an agent proactive, and the envelope that keeps it from spamming, repeating itself, or running away.
 
 ## How the loop runs
 
@@ -116,7 +118,21 @@ decides to do through governance. The seam is the same in every framework:
 `store.insertGoalTick({ goalId, tickId: boundary.tickId, orderIndex: 0 })`.
 (Plan/Act mode does this bookkeeping for you.)
 
-There are two shapes, depending on whether the framework calls tools itself.
+Every framework gets the same proactive loop: the scheduler wakes it, goals
+persist across ticks, and it sets its own cadence. The framework only runs
+inside the `tick`. The one thing that differs is how the model's chosen actions
+reach `governance.dispatch`, and that comes down to whether the framework calls
+tools itself.
+
+| Framework | How actions reach governance |
+|-----------|------------------------------|
+| LangGraph | Govern the tool |
+| Vercel AI SDK | Govern the tool |
+| OpenAI SDK | Parse, then dispatch |
+| Anthropic SDK | Parse, then dispatch |
+| Mastra | Parse, then dispatch |
+
+Anything not listed fits one of these: govern the tool if the model calls tools itself, parse then dispatch if it returns actions for you to run.
 
 ### LangGraph or Vercel AI SDK: govern the tool
 
