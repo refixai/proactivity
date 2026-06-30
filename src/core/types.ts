@@ -341,6 +341,9 @@ export type PlannerContext = {
 
 export type ExecutorContext = {
   goal: GoalRecord;
+  // The goal-tick opened for this pass. Pass it to governance.dispatch so each
+  // action is attributed to the goal being worked this tick.
+  goalTickId: string;
   boundary: BriefingBoundary;
   briefing: Record<string, unknown>;
   governance: GovernanceHandle;

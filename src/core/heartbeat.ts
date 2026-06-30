@@ -139,7 +139,7 @@ export const createPlanActHeartbeat = (config: PlanActConfig): Heartbeat => {
           });
 
           try {
-            const passResult = await config.executor({ goal, boundary, briefing, governance });
+            const passResult = await config.executor({ goal, goalTickId, boundary, briefing, governance });
 
             await store.updateGoalTick(goalTickId, {
               acted: passResult.acted,

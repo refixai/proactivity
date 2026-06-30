@@ -334,6 +334,52 @@ describe("createPlanActHeartbeat", () => {
     expect(result.nextCadenceMs).toBe(300_000);
   });
 
+  test("executor dispatches through governance with the provided goalTickId", async () => {
+    const store = createTestStore();
+    await store.upsertState("e1", { enabled: true });
+
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
+    await store.applyGoalMutations(tickId, [
+      { op: "create", goalId: "g1", title: "T", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
+    ]);
+    await store.updateTick(tickId, { status: "completed", completedAt: new Date() });
+
+    const performed = vi.fn();
+
+    const heartbeat = createPlanActHeartbeat({
+      store,
+      sources: [],
+      governance: makeGovernanceConfig(store),
+      cadence: makeCadenceConfig(),
+      planner: async () => ({
+        goalMutations: [],
+        selectedGoals: [{ goalId: "g1", reasoning: "work it" }],
+        skippedGoals: [],
+      }),
+      executor: async ({ goal, goalTickId, governance }) => {
+        const { governanceOutcome } = await governance.dispatch({
+          goalId: goal.id,
+          goalTickId,
+          actionType: "send_follow_up",
+          target: { goalId: goal.id },
+          reasoning: "follow up",
+          perform: async () => { performed(); },
+        });
+        return { acted: governanceOutcome === "taken", summary: "done" };
+      },
+    });
+
+    const result = await heartbeat.runTick("e1", "manual");
+
+    expect(result.status).toBe("completed");
+    expect(result.actionsTakenCount).toBe(1);
+    expect(performed).toHaveBeenCalledOnce();
+
+    const attempts = await store.listAttempts(result.tickId);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]!.governanceOutcome).toBe("taken");
+  });
+
   test("executor crash does not abort tick", async () => {
     const store = createTestStore();
     await store.upsertState("e1", { enabled: true });
