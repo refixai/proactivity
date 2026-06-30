@@ -25,6 +25,7 @@ pnpm add bullmq    # for @refixai/proactivity/bullmq
 
 ```typescript
 import { createHeartbeat, createTestStore } from '@refixai/proactivity'
+import { buildTickPrompt } from '@refixai/proactivity/prompts'
 
 const store = createTestStore() // in-memory, for dev/tests; use createPostgresStore for production
 
@@ -32,29 +33,94 @@ const heartbeat = createHeartbeat({
   store,
   cadence: { min: 15 * 60_000, max: 24 * 60 * 60_000, default: 60 * 60_000 },
   governance: { store, caps: { perPass: 3, perTick: 10 } },
-  tick: async ({ briefing, goals, governance }) => {
-    // Your agent logic here.
-    // Use governance.dispatch() for every side effect; it handles
-    // idempotency, rate limiting, and audit trails automatically.
-
-    await governance.dispatch({
-      goalId: goals[0].id,
-      goalTickId: 'tick-1',
-      actionType: 'send_email',
-      target: { userId: 'user-123' },
-      reasoning: 'Weekly summary is due',
-      perform: async () => {
-        // The actual side effect (only runs if governance approves)
-        await sendEmail('user-123', 'Your weekly summary')
-      },
+  tick: async ({ briefing, goals, governance, boundary }) => {
+    // 1. Turn this tick's state into a prompt (or assemble your own).
+    const prompt = buildTickPrompt({
+      briefing, goals,
+      entityId: boundary.entityId,
+      tickNumber: boundary.tickNumber,
     })
 
-    return { cadenceHint: { nextTickMs: 60 * 60_000, reasoning: 'Check back in 1 hour' } }
+    // 2. Hand it to your reasoning loop. See "Framework patterns" below.
+    const plan = await yourAgent(prompt)
+
+    // 3. Route every side effect through governance: it dedupes, enforces
+    //    the caps, and records each attempt. goalId/goalTickId tie the
+    //    action to the goal it advances (see "Framework patterns").
+    for (const action of plan.actions) {
+      await governance.dispatch({
+        goalId: action.goalId,
+        goalTickId: action.goalTickId,
+        actionType: action.type,
+        target: action.target,
+        reasoning: action.reasoning,
+        perform: async () => { await action.run() },
+      })
+    }
+
+    return { cadenceHint: plan.cadenceHint }
   },
 })
 
 const result = await heartbeat.runTick('entity-1', 'manual')
 ```
+
+## Framework patterns
+
+The SDK is the scaffolding; your reasoning loop lives inside `tick`. Whatever
+framework you use, the seam is the same: build a prompt from the tick context,
+then route every side effect through `governance.dispatch`. `goalId` is the goal
+an action advances; get a `goalTickId` for it with
+`store.insertGoalTick({ goalId, tickId: boundary.tickId, orderIndex: 0 })`.
+(Plan/Act mode does that bookkeeping for you.)
+
+There are two shapes, depending on whether the framework calls tools itself.
+
+### LangGraph / Vercel AI SDK (governed tool)
+
+The model calls tools, so wrap each side-effecting tool to dispatch through
+governance, binding the current `goalId`/`goalTickId` when you build it:
+
+```typescript
+const sendEmail = (governance, goalId, goalTickId) => ({
+  name: 'send_email',
+  func: async ({ userId, body }) => {
+    const { governanceOutcome } = await governance.dispatch({
+      goalId, goalTickId,
+      actionType: 'send_email',
+      target: { userId },
+      reasoning: `Email ${userId}`,
+      perform: async () => { await mailer.send(userId, body) },
+    })
+    return governanceOutcome // governance's verdict, surfaced back to the model
+  },
+})
+```
+
+Build the tool inside `tick`, hand it to your graph or `generateText`, and the
+model's tool calls are governed transparently.
+
+### OpenAI / Anthropic / Mastra (parse, then dispatch)
+
+The model returns structured actions; loop over them and dispatch each:
+
+```typescript
+const plan = await model.respond(prompt) // your SDK call
+for (const action of plan.actions) {
+  await governance.dispatch({
+    goalId, goalTickId,
+    actionType: action.actionType,
+    target: action.target,
+    reasoning: action.reasoning,
+    perform: async () => { await execute(action) },
+  })
+}
+return { cadenceHint: plan.cadenceHint }
+```
+
+Either shape gets the caps, idempotency, and audit trail for free. Runnable
+versions of all five frameworks live in
+[`src/integrations.test.ts`](src/integrations.test.ts).
 
 ## Core primitives
 
@@ -157,6 +223,7 @@ const heartbeat = createPlanActHeartbeat({
 | `@refixai/proactivity/postgres` | Production store (raw SQL, ships migrations) | `pg` |
 | `@refixai/proactivity/bullmq` | Production scheduler (self-rescheduling) | `bullmq` |
 | `@refixai/proactivity/timer` | setTimeout scheduler for development | none |
+| `@refixai/proactivity/prompts` | Tick / planner / executor prompt builders | none |
 
 ### Custom stores
 
