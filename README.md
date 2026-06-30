@@ -1,8 +1,8 @@
 # @refixai/proactivity
 
-Proactivity primitives for autonomous agents. Scheduling, governance, goals, and briefing — so your agent can act on its own without spamming, repeating itself, or running away.
+Proactivity primitives for autonomous agents. Scheduling, governance, goals, and briefing, so your agent can act on its own without spamming, repeating itself, or running away.
 
-## The Problem
+## The problem
 
 Every team deploying an autonomous agent rebuilds the same infrastructure: idempotency guards after the first spam incident, rate limiting after the first runaway loop, crash-safe scheduling after the first lost job, audit trails after the first "what did the agent do?" question.
 
@@ -21,13 +21,12 @@ pnpm add pg        # for @refixai/proactivity/postgres
 pnpm add bullmq    # for @refixai/proactivity/bullmq
 ```
 
-## Quick Start
+## Quick start
 
 ```typescript
 import { createHeartbeat, createTestStore } from '@refixai/proactivity'
-import { createTimerAdapter } from '@refixai/proactivity/timer'
 
-const store = createTestStore() // in-memory, for dev/tests — use createPostgresStore for production
+const store = createTestStore() // in-memory, for dev/tests; use createPostgresStore for production
 
 const heartbeat = createHeartbeat({
   store,
@@ -35,7 +34,7 @@ const heartbeat = createHeartbeat({
   governance: { store, caps: { perPass: 3, perTick: 10 } },
   tick: async ({ briefing, goals, governance }) => {
     // Your agent logic here.
-    // Use governance.dispatch() for every side effect — it handles
+    // Use governance.dispatch() for every side effect; it handles
     // idempotency, rate limiting, and audit trails automatically.
 
     await governance.dispatch({
@@ -45,7 +44,7 @@ const heartbeat = createHeartbeat({
       target: { userId: 'user-123' },
       reasoning: 'Weekly summary is due',
       perform: async () => {
-        // The actual side effect — only runs if governance approves
+        // The actual side effect (only runs if governance approves)
         await sendEmail('user-123', 'Your weekly summary')
       },
     })
@@ -57,11 +56,11 @@ const heartbeat = createHeartbeat({
 const result = await heartbeat.runTick('entity-1', 'manual')
 ```
 
-## Core Primitives
+## Core primitives
 
-### Scheduler — Self-Adjusting Attention
+### Scheduler: self-adjusting attention
 
-The agent decides its own wake-up interval. Not a fixed cron — the agent reasons about how closely to watch based on what it observes.
+The agent decides its own wake-up interval. It isn't a fixed cron: the agent reasons about how closely to watch based on what it observes.
 
 ```typescript
 import { createScheduler } from '@refixai/proactivity'
@@ -80,9 +79,9 @@ await scheduler.start('entity-1')
 
 Failures auto-recover: null cadence hint defaults to `cadence.default`, and `seedFromStore()` re-enqueues missed jobs on restart.
 
-### Briefing Assembler — Delta-Aware Context
+### Briefing assembler: delta-aware context
 
-Register data sources. Each receives a `BriefingBoundary` with a `deltaCutoff` timestamp — "what's new since last tick."
+Register data sources. Each receives a `BriefingBoundary` with a `deltaCutoff` timestamp marking what is new since the last tick.
 
 ```typescript
 const sources = [
@@ -91,25 +90,25 @@ const sources = [
 ]
 
 // Pass `sources` to your heartbeat config. Each tick runs them in parallel
-// against that tick's boundary — assembleBriefing(sources, boundary) —
+// against that tick's boundary via assembleBriefing(sources, boundary),
 // producing { newUsers: [...], openTickets: [...] }.
 ```
 
-### Goal Store — Durable Missions
+### Goal store: durable missions
 
 Persistent goals that survive across ticks. The agent pursues missions it set for itself, not just reacting to signals.
 
-Goals have a lifecycle (`active → paused → completed → archived`), priority levels, and mutation validation — no creating and archiving the same goal in one batch.
+Goals have a lifecycle (`active → paused → completed → archived`), priority levels, and mutation validation that rejects contradictory batches such as creating and archiving the same goal at once.
 
-### Governance Envelope — Safe Side Effects
+### Governance envelope: safe side effects
 
-Every action the agent takes goes through governance. It handles:
+Every action the agent takes goes through governance, which handles:
 
-- **Idempotency** — deterministic keys prevent duplicate actions across retries
-- **Hard caps** — per-pass and per-tick action limits (hard stop, no override)
-- **Soft caps** — warnings with optional override reasoning
-- **Dry-run mode** — record all actions as `pending_approval` without executing
-- **Audit trail** — every attempt recorded with outcome, reasoning, and error
+- Idempotency: deterministic keys prevent duplicate actions across retries
+- Hard caps: per-pass and per-tick action limits (a hard stop with no override)
+- Soft caps: warnings with optional override reasoning
+- Dry-run mode: records every action as `pending_approval` without executing it
+- Audit trail: every attempt recorded with its outcome, reasoning, and error
 
 ```typescript
 const result = await governance.dispatch({
@@ -126,7 +125,7 @@ const result = await governance.dispatch({
 
 Governance never throws. Side-effect failures are caught and wrapped in a denial result.
 
-## Plan/Act Mode (Optional)
+## Plan/Act mode (optional)
 
 For complex agents, split reasoning into a planner (mutates goals, selects which to work on) and an executor (works on one goal at a time):
 
@@ -154,23 +153,19 @@ const heartbeat = createPlanActHeartbeat({
 
 | Subpath | Purpose | Peer Dep |
 |---------|---------|----------|
-| `@refixai/proactivity` | Core primitives + `createTestStore` (zero deps) | — |
+| `@refixai/proactivity` | Core primitives + `createTestStore` (zero deps) | none |
 | `@refixai/proactivity/postgres` | Production store (raw SQL, ships migrations) | `pg` |
 | `@refixai/proactivity/bullmq` | Production scheduler (self-rescheduling) | `bullmq` |
-| `@refixai/proactivity/timer` | setTimeout scheduler for development | — |
+| `@refixai/proactivity/timer` | setTimeout scheduler for development | none |
 
-### Custom Stores
+### Custom stores
 
 The bundled Postgres store and `createTestStore` cover most needs, but the
 backend is a public extension point. Implement the `ProactivityStore` interface
-to persist to any database — the `Insert*` / `*Patch` types exported from the
+to persist to any database. The `Insert*` / `*Patch` types exported from the
 root are its method payloads. Likewise, implement `SchedulerAdapter` to drive
 the loop from a queue other than BullMQ. If you only use the bundled adapters,
 you never touch these types.
-
-## Derived From Production
-
-These primitives are extracted from [Oracle](https://refix.ai), an autonomous agent that has run thousands of production heartbeats — sending real messages to real users with governance, self-adjusting cadence, and crash recovery. The patterns here are battle-tested, not theoretical.
 
 ## License
 
