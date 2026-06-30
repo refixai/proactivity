@@ -3,6 +3,13 @@ export { createScheduler, type Scheduler } from "./scheduler.js";
 export { assembleBriefing } from "./briefing.js";
 export { createHeartbeat, createPlanActHeartbeat, type Heartbeat } from "./heartbeat.js";
 
+// Governance as a standalone primitive — so a consumer driving its own loop
+// (e.g. the OpenClaw plugin) can wrap outbound actions in the same envelope the
+// heartbeat uses, instead of reimplementing it.
+export { createGovernance } from "./governance.js";
+export { createLedger, type Ledger } from "./ledger.js";
+export { validateGoalMutations } from "./goals.js";
+
 export type {
   SchedulerConfig,
   TickRecord,
