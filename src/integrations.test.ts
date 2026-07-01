@@ -1,4 +1,5 @@
 import { describe, test, expect, vi } from "vitest";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createTestStore } from "./memory/index.js";
 import { createHeartbeat } from "./core/heartbeat.js";
 import { buildTickPrompt } from "./prompts/index.js";
@@ -189,6 +190,60 @@ describe("integration patterns", () => {
 
     expect(result.actionsTakenCount).toBe(1);
     expect(performed).toEqual(["crm_update"]);
+  });
+
+  test("Eve pattern: file-based tool reads governance from ALS-scoped context", async () => {
+    const performed: string[] = [];
+
+    // Eve tools live in their own files and run inside an "active eve context
+    // (ALS scope)" (its defineState is ALS-backed). A file-based tool can't
+    // close over the tick's governance the way a LangGraph tool does, so it
+    // reads it from that ambient context. AsyncLocalStorage stands in for it.
+    const tickContext = new AsyncLocalStorage<{
+      governance: GovernanceHandle;
+      goalId: string;
+      goalTickId: string;
+    }>();
+
+    // An Eve defineTool({ ..., execute(input, ctx) }). It pulls the governance
+    // handle and goal ids from the ambient context, not from a closure.
+    const sendEmail = {
+      description: "Email a user",
+      execute: async (input: { userId: string }, _ctx: { session: { id: string } }) => {
+        const tick = tickContext.getStore();
+        if (!tick) throw new Error("tool ran outside a tick context");
+        const result = await tick.governance.dispatch({
+          goalId: tick.goalId,
+          goalTickId: tick.goalTickId,
+          actionType: "send_email",
+          target: { userId: input.userId },
+          reasoning: `Email ${input.userId}`,
+          perform: async () => { performed.push(`email:${input.userId}`); },
+        });
+        return { governanceOutcome: result.governanceOutcome };
+      },
+    };
+
+    const { store, heartbeat } = makeHeartbeat(async (ctx) => {
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-eve");
+
+      // The tick opens the ALS scope, then runs the Eve session (a POST to
+      // /eve/v1/session). The tool executes inside that scope, so getStore()
+      // resolves to this tick's governance.
+      const outcome = await tickContext.run(
+        { governance: ctx.governance, goalId: "g-eve", goalTickId },
+        () => sendEmail.execute({ userId: "u1" }, { session: { id: "s1" } }),
+      );
+
+      expect(outcome.governanceOutcome).toBe("taken");
+      return {};
+    });
+
+    await store.upsertState("e1", { enabled: true });
+    const result = await heartbeat.runTick("e1", "manual");
+
+    expect(result.actionsTakenCount).toBe(1);
+    expect(performed).toEqual(["email:u1"]);
   });
 
   test("governance caps enforced across framework tool calls", async () => {

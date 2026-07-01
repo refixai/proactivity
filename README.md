@@ -1,5 +1,19 @@
 # @refixai/proactivity
 
+<p align="center">
+  <img src="https://img.shields.io/badge/LangGraph-000000?style=flat-square&logo=langchain&logoColor=white" alt="LangGraph" />
+  &nbsp;
+  <img src="https://img.shields.io/badge/Vercel_AI_SDK-000000?style=flat-square&logo=vercel&logoColor=white" alt="Vercel AI SDK" />
+  &nbsp;
+  <img src="https://img.shields.io/badge/OpenAI_SDK-412991?style=flat-square&logo=openai&logoColor=white" alt="OpenAI SDK" />
+  &nbsp;
+  <img src="https://img.shields.io/badge/Anthropic_SDK-CC785C?style=flat-square&logo=anthropic&logoColor=white" alt="Anthropic SDK" />
+  &nbsp;
+  <img src="https://img.shields.io/badge/Mastra-000000?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MzAiIGhlaWdodD0iMjY3IiB2aWV3Qm94PSIxMTYgMTE2IDQzMCAyNjciIGZpbGw9Im5vbmUiPjxwYXRoIGZpbGw9IndoaXRlIiBkPSJNMTc0LjM2IDI2Ni4zM2MzMi4yMyAwIDU4LjM2IDI1LjkgNTguMzYgNTcuODMgMCAzMS45NC0yNi4xMyA1Ny44My01OC4zNiA1Ny44M1MxMTYgMzU2LjEgMTE2IDMyNC4xNnMyNi4xMy01Ny44MyA1OC4zNi01Ny44MyIvPjxwYXRoIGZpbGw9IndoaXRlIiBkPSJNMjUwLjc2IDExNmMzMi4yMyAwIDU4LjM2IDI1LjkgNTguMzYgNTcuODNxMCA0LjA5LS41NiA4LjAxYy0yLjk0IDIwLjk3LTcuMjYgNDQuNjIgNC42NSA2Mi4xOWwxMy43MiAyMC4yMiAzLjM5IDQuMTNjLjYyLjc1IDEuOC43MSAyLjM2LS4wOWwyLjg3LTQuMDQgMTIuNTQtMTguNWMxMi41Mi0xOC40NSA3Ljk4LTQzLjM4IDUuODMtNjUuNTFhNTggNTggMCAwIDEtLjI3LTUuNmMwLTMxLjk0IDI2LjEzLTU3LjgzIDU4LjM2LTU3LjgzczU4LjM2IDI1Ljg5IDU4LjM2IDU3LjgzcTAgNC42Ni0uNzIgOS4xMmMtMy4xOCAxOS44NC03LjczIDQxLjc3IDIuNCA1OS4xNmw1LjggOS4yOGM1LjQ4IDguNzkgMTUuMyAxMy41NyAyNS4yNiAxNi40NiAyNC4yMiA3LjA0IDQxLjkgMjkuMjIgNDEuOTEgNTUuNSAwIDMxLjk0LTI2LjEzIDU3LjgzLTU4LjM2IDU3Ljgzcy01OC4zNi0yNS44OS01OC4zNi01Ny44M3EwLTUuMTUuODgtMTAuMDVjMy40Ni0xOS41NiA4LjA0LTQxLjI0LTEuOTgtNTguNDNsLTEyLjcyLTIxLjg0LS43Ny0xLjA0YTEuNDIgMS40MiAwIDAgMC0yLjI0LS4wNmwtMTMuNiAyMC4wNWMtMTIuMiAxNy45OC03LjYgNDIuMjYtNC43NSA2My43M3EuNSAzLjc1LjUgNy42NGMwIDMxLjk0LTI2LjEzIDU3LjgzLTU4LjM2IDU3Ljgzcy01OC4zNi0yNS44OS01OC4zNi01Ny44M2MwLTIyLjY5IDMuNTQtNDguMDEtOS4yMy02Ni44NWwtMS0xLjQ5Yy0xMC4yNy0xNS4xMi0yOC40OC0yMi42My00NC41LTMxLjU3YTU3LjcgNTcuNyAwIDAgMS0yOS43Ny01MC40MmMwLTMxLjk0IDI2LjEzLTU3LjgzIDU4LjM2LTU3LjgzIi8+PC9zdmc+&logoColor=white" alt="Mastra" />
+  &nbsp;
+  <img src="https://img.shields.io/badge/Eve-000000?style=flat-square&logo=vercel&logoColor=white" alt="Eve" />
+</p>
+
 Proactivity primitives for autonomous agents. Scheduling, governance, goals, and briefing, so your agent can act on its own without spamming, repeating itself, or running away.
 
 ## The problem
@@ -131,6 +145,7 @@ tools itself.
 | OpenAI SDK | Parse, then dispatch |
 | Anthropic SDK | Parse, then dispatch |
 | Mastra | Parse, then dispatch |
+| Eve | Govern the tool |
 
 Anything not listed fits one of these: govern the tool if the model calls tools itself, parse then dispatch if it returns actions for you to run.
 
@@ -188,6 +203,18 @@ tick: async ({ briefing, goals, governance, boundary }) => {
 }
 ```
 
+### Eve
+
+Eve tools live in their own files, so a tool can't close over the tick's
+`governance` the way a LangGraph tool does. Read it from the framework's per-run
+context instead. Eve passes a context to `execute(input, ctx)` and its
+`defineState` is ALS-scoped, so the tick opens an ALS scope before it starts the
+Eve session, and the tool reads `governance`, `goalId`, and `goalTickId` back out
+of it. Eve also ships native cron schedules, so the proactive trigger can be
+Eve-native; the self-adjusting cadence, durable goals, and governance are what
+proactivity adds on top. The tested pattern is in
+[`src/integrations.test.ts`](src/integrations.test.ts).
+
 ### OpenAI, Anthropic, or Mastra: parse, then dispatch
 
 The model returns structured actions instead of calling tools. Loop over them
@@ -208,7 +235,7 @@ return { cadenceHint: plan.cadenceHint }
 ```
 
 Either shape gets the caps, idempotency, and audit trail for free. Runnable
-versions of both, across five frameworks, live in
+versions of both, across six frameworks, live in
 [`src/integrations.test.ts`](src/integrations.test.ts).
 
 ## Core primitives
@@ -355,4 +382,4 @@ you never touch these types.
 
 ## License
 
-MIT
+Apache-2.0. See [LICENSE](LICENSE).
