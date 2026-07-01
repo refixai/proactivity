@@ -129,7 +129,8 @@ export const createPlanActHeartbeat = (config: PlanActConfig): Heartbeat => {
 
         for (const selected of plan.selectedGoals) {
           const goal = await store.getGoal(selected.goalId);
-          if (!goal) continue;
+          // getGoal keys on id alone; reject a planner-supplied id from another entity.
+          if (!goal || goal.entityId !== entityId) continue;
 
           const governance = createGovernance(govConfig, tickId, entityId, ledger);
           const goalTickId = await store.insertGoalTick({

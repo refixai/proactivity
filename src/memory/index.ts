@@ -139,7 +139,8 @@ export const createTestStore = (): ProactivityStore => {
           });
         } else {
           const goal = goals.get(m.goalId!);
-          if (!goal) continue;
+          // entity_id scope: an LLM-supplied goalId can't reach another entity's goal.
+          if (!goal || goal.entityId !== entityId) continue;
 
           const patch: Partial<GoalRecord> = { updatedAt: now };
 

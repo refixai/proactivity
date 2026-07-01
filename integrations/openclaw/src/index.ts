@@ -33,6 +33,10 @@ export default definePluginEntry({
     const getNum = (k: string, d: number) => (typeof cfg[k] === "number" ? (cfg[k] as number) : d);
     const getStr = (k: string, d: string) => (typeof cfg[k] === "string" ? (cfg[k] as string) : d);
 
+    // Default fail-open (match OpenClaw's resilient posture); flip on for deployments
+    // that need governance to be a hard gate even when its store is unavailable.
+    const failClosed = cfg.failClosed === true;
+
     const dbPath = getStr("dbPath", join(homedir(), ".openclaw", "proactivity.json"));
     let runtime = runtimeByDbPath.get(dbPath);
     if (!runtime) {
@@ -59,8 +63,8 @@ export default definePluginEntry({
         const verdict = await runtime.decide("message", { to: event.to, content: event.content });
         if (!verdict.ok) return { cancel: true, cancelReason: verdict.reason };
       } catch (err) {
-        // Never block on governance's own failure — match OpenClaw's resilient posture.
-        api.logger?.warn?.(`proactivity: governance error, allowing send (${(err as Error).message})`);
+        api.logger?.warn?.(`proactivity: governance error, ${failClosed ? "blocking" : "allowing"} send (${(err as Error).message})`);
+        if (failClosed) return { cancel: true, cancelReason: "proactivity governance unavailable (fail-closed)" };
       }
       return undefined;
     });
@@ -73,7 +77,8 @@ export default definePluginEntry({
         const verdict = await runtime.decide(event.toolName, { toolName: event.toolName, params: event.params });
         if (!verdict.ok) return { block: true, blockReason: verdict.reason };
       } catch (err) {
-        api.logger?.warn?.(`proactivity: governance error, allowing tool (${(err as Error).message})`);
+        api.logger?.warn?.(`proactivity: governance error, ${failClosed ? "blocking" : "allowing"} tool (${(err as Error).message})`);
+        if (failClosed) return { block: true, blockReason: "proactivity governance unavailable (fail-closed)" };
       }
       return undefined;
     });

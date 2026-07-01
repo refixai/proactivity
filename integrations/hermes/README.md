@@ -51,6 +51,7 @@ Set via environment variables (sensible defaults shown):
 | `PROACTIVITY_TICK_SECONDS` | `60` | Width of a "tick" bucket; the scope of the per-tick cap and idempotency |
 | `PROACTIVITY_RECENT_CONTACT_THRESHOLD` | `2` | Soft-cap: hold a send after this many recent contacts to the same recipient |
 | `PROACTIVITY_DRY_RUN` | `false` | Record actions as `pending_approval` instead of performing them |
+| `PROACTIVITY_FAIL_CLOSED` | `false` | If governance itself errors (e.g. its store is unavailable), block the tool call instead of letting it through |
 | `PROACTIVITY_ENTITY_ID` | `hermes` | Governance scope (for a single personal agent, leave as-is) |
 
 ## Limitations (honest)

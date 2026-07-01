@@ -71,6 +71,9 @@ def register(ctx) -> None:
     tick_seconds = _env_int("PROACTIVITY_TICK_SECONDS", 60)
     contact_threshold = _env_int("PROACTIVITY_RECENT_CONTACT_THRESHOLD", 2)
     dry_run = os.environ.get("PROACTIVITY_DRY_RUN", "").lower() in ("1", "true", "yes")
+    # Default fail-open (Hermes itself fails open); flip on for deployments that need
+    # governance to be a hard gate even when its store is unavailable.
+    fail_closed = os.environ.get("PROACTIVITY_FAIL_CLOSED", "").lower() in ("1", "true", "yes")
     # Opt-in: with nothing named, the plugin still gives you goals + cadence but wraps
     # none of the agent's tools. Name your real outbound tools (e.g. "discord") to turn
     # the envelope on — there is no safe default, since only you know which tool sends.
@@ -152,13 +155,18 @@ def register(ctx) -> None:
         try:
             result = governance.dispatch(tick_id, request)
         except Exception:  # noqa: BLE001
-            # Never block on governance's own failure (Hermes itself fails open).
             # If dispatch raised *after* perform() (e.g. a post-send store write),
-            # this re-call hits Hermes's single-use next_call guard and no-ops, so
-            # the action still fires at most once.
-            # ponytail: fail-open on internal error; add a fail-closed env flag if
-            # a deployment ever needs hard guarantees.
-            logger.exception("proactivity: governance error; letting the call through")
+            # the single-use next_call guard means the action already fired once; a
+            # fail-closed block here can't unsend it, only report. Pre-perform failures
+            # (the store read/insert gate) are the ones fail-closed actually stops.
+            logger.exception(
+                "proactivity: governance error; %s the call",
+                "blocking" if fail_closed else "letting through",
+            )
+            if fail_closed:
+                return tool_error(
+                    "proactivity governance unavailable (fail-closed)", governance="hard_denied"
+                )
             return next_call(args)
 
         if result.performed:

@@ -42,6 +42,7 @@ Under `plugins.entries.proactivity.config` in `openclaw.json`:
 | `tickSeconds` | `60` | Width of a tick bucket; scope of the per-tick cap and idempotency |
 | `recentContactThreshold` | `3` | Soft-cap: hold a send after this many recent contacts to the same recipient |
 | `dryRun` | `false` | Record actions without performing them |
+| `failClosed` | `false` | If governance itself errors (e.g. its store is unavailable), block the action instead of letting it through |
 | `sessionKey` | none | Session to route proactive cron ticks into |
 | `dbPath` | `~/.openclaw/proactivity.json` | JSON store location |
 

@@ -285,14 +285,16 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
             if (m.findings !== undefined) { sets.push(`findings = $${i++}`); vals.push(m.findings); }
             if (m.nextActions !== undefined) { sets.push(`next_actions = $${i++}`); vals.push(m.nextActions); }
             if (m.priority !== undefined) { sets.push(`priority = $${i++}`); vals.push(m.priority); }
-            await client.query(`UPDATE proactivity_goals SET ${sets.join(", ")} WHERE id = $1`, vals);
+            // entity_id scope: an LLM-supplied goalId can't reach another entity's goal.
+            vals.push(entityId);
+            await client.query(`UPDATE proactivity_goals SET ${sets.join(", ")} WHERE id = $1 AND entity_id = $${i}`, vals);
           } else if (m.op === "reprioritize") {
             if (m.priority !== undefined) {
-              await client.query("UPDATE proactivity_goals SET priority = $2, updated_at = now() WHERE id = $1", [m.goalId, m.priority]);
+              await client.query("UPDATE proactivity_goals SET priority = $2, updated_at = now() WHERE id = $1 AND entity_id = $3", [m.goalId, m.priority, entityId]);
             }
           } else if (m.op === "complete" || m.op === "archive" || m.op === "pause") {
             const status = m.op === "complete" ? "completed" : m.op === "archive" ? "archived" : "paused";
-            await client.query("UPDATE proactivity_goals SET status = $2, updated_at = now() WHERE id = $1", [m.goalId, status]);
+            await client.query("UPDATE proactivity_goals SET status = $2, updated_at = now() WHERE id = $1 AND entity_id = $3", [m.goalId, status, entityId]);
           }
         }
         await client.query("COMMIT");

@@ -30,7 +30,7 @@ from hermes_cli.middleware import run_tool_execution_middleware
 
 import proactivity_hermes as plugin
 
-_TUNABLES = ("PROACTIVITY_RECENT_CONTACT_THRESHOLD", "PROACTIVITY_GOVERNED_TOOLS", "PROACTIVITY_PER_TICK_CAP")
+_TUNABLES = ("PROACTIVITY_RECENT_CONTACT_THRESHOLD", "PROACTIVITY_GOVERNED_TOOLS", "PROACTIVITY_PER_TICK_CAP", "PROACTIVITY_FAIL_CLOSED")
 
 
 def _register(**env):
@@ -112,6 +112,29 @@ def test_fail_open_does_not_double_send():
     finally:
         SqliteStore.mark_attempt_completed = original
         get_plugin_manager()._middleware.pop("tool_execution", None)
+
+
+def _raise_pre_perform(self, *a, **k):
+    raise RuntimeError("simulated store failure before the gate decided")
+
+
+def test_fail_closed_blocks_when_store_is_down():
+    # Default is fail-open. With PROACTIVITY_FAIL_CLOSED=1, a store failure in the
+    # pre-perform gate (here count_taken_for_tick) must block the send, not let it
+    # through. Proves the action never fires and the caller sees a hard denial.
+    from proactivity_hermes.store import SqliteStore
+
+    original = SqliteStore.count_taken_for_tick
+    SqliteStore.count_taken_for_tick = _raise_pre_perform
+    try:
+        mw = _register(PROACTIVITY_GOVERNED_TOOLS="send_message", PROACTIVITY_FAIL_CLOSED=1)
+        sends = []
+        nxt = lambda a: (sends.append(a), tool_result(sent=True))[1]  # noqa: E731
+        result = json.loads(mw(tool_name="send_message", args={"to": "u1", "message": "x"}, next_call=nxt))
+        assert result.get("error") and "fail-closed" in result["error"].lower(), result
+        assert len(sends) == 0, f"fail-closed must not send: fired {len(sends)}x"
+    finally:
+        SqliteStore.count_taken_for_tick = original
 
 
 def test_governs_a_real_agent_callable_tool():

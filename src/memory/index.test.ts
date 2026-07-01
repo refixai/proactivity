@@ -136,6 +136,22 @@ describe("createTestStore", () => {
     expect((await store.getGoal(goal.id))!.status).toBe("archived");
   });
 
+  test("applyGoalMutations can't mutate another entity's goal", async () => {
+    const store = makeStore();
+    // e1 owns a goal; e2's tick tries to archive it by id.
+    const { tickId: t1 } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
+    await store.applyGoalMutations(t1, [
+      { op: "create", goalId: "g-e1", title: "e1 goal", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
+    ]);
+
+    const { tickId: t2 } = await store.insertTick({ entityId: "e2", trigger: "manual", dryRun: false });
+    await store.applyGoalMutations(t2, [
+      { op: "archive", goalId: "g-e1", reasoning: "cross-entity attempt" },
+    ]);
+
+    expect((await store.getGoal("g-e1"))!.status).toBe("active");
+  });
+
   test("listGoals filters by status", async () => {
     const store = makeStore();
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
