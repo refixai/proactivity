@@ -161,7 +161,7 @@ tools itself.
 | OpenAI SDK | Parse, then dispatch | same pattern: [`examples/anthropic`](examples/anthropic) |
 | Anthropic SDK | Parse, then dispatch | [`examples/anthropic`](examples/anthropic) |
 | Mastra | Parse, then dispatch | same pattern: [`examples/anthropic`](examples/anthropic) |
-| Eve | Govern the tool | same pattern: [`examples/langgraph`](examples/langgraph) |
+| Eve | Govern the tool (Eve-native trigger) | [`examples/eve`](examples/eve) |
 
 Anything not listed fits one of these: govern the tool if the model calls tools itself, parse then dispatch if it returns actions for you to run. Each pattern has one runnable, compile-checked example under [`examples/`](examples) with the real framework as a dependency; the pattern for every framework in the table is also shape-tested (against framework-shaped stand-ins, not the frameworks themselves) in [`src/integrations.test.ts`](src/integrations.test.ts).
 
@@ -222,13 +222,17 @@ tick: async ({ briefing, goals, governance, boundary }) => {
 ### Eve
 
 Eve tools live in their own files, so a tool can't close over the tick's
-`governance` the way a LangGraph tool does. Read it from the framework's per-run
-context instead. Eve passes a context to `execute(input, ctx)` and its
-`defineState` is ALS-scoped, so the tick opens an ALS scope before it starts the
-Eve session, and the tool reads `governance`, `goalId`, and `goalTickId` back out
-of it. Eve also ships native cron schedules, so the proactive trigger can be
-Eve-native; the self-adjusting cadence, durable goals, and governance are what
-proactivity adds on top. The tested pattern is in
+`governance` the way a LangGraph tool does. A `session.started` hook opens the
+tick (goal, goal-tick) and seeds the tick's **ids** into `defineState`; the
+governed tool reads those ids back and rebuilds the envelope from them plus the
+shared store. It rebuilds rather than reading a live handle out of state because
+Eve is a durable-workflow runtime that serializes `defineState` across steps —
+a `GovernanceHandle` holds a function and can't be serialized. Idempotency still
+holds because it's enforced by the store on `tickId`, not by the in-memory
+handle. Eve also ships native cron schedules, so the proactive trigger is
+Eve-native; the durable goals, governance, and audit ledger are what proactivity
+adds on top. Runnable example: [`examples/eve`](examples/eve) (verified live
+end-to-end); the pattern is also shape-tested in
 [`src/integrations.test.ts`](src/integrations.test.ts).
 
 ### OpenAI, Anthropic, or Mastra: parse, then dispatch
