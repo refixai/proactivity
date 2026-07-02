@@ -9,6 +9,7 @@
   "exports": { ".": "./dist/index.js" },
   "files": ["dist", "openclaw.plugin.json"],
   "engines": { "node": ">=22.19.0" },
+  "publishConfig": { "access": "public" },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -27,7 +28,7 @@
     "release": { "publishToClawHub": false, "publishToNpm": true }
   },
   "dependencies": {
-    "@refixai/proactivity": "file:../..",
+    "@refixai/proactivity": "^0.1.0",
     "typebox": "^1.1.39"
   },
   "peerDependencies": {
