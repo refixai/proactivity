@@ -1,4 +1,4 @@
-"""The governance envelope — a Python port of `@refixai/proactivity`'s
+"""The governance envelope — a Python port of `@refix/proactivity`'s
 `core/governance.ts`, adapted for Hermes.
 
 This is the crown jewel: every outbound action the agent attempts passes

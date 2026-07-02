@@ -1,6 +1,6 @@
 """SQLite-backed store for the Hermes proactivity plugin.
 
-Implements just the subset of `@refixai/proactivity`'s `ProactivityStore` that a
+Implements just the subset of `@refix/proactivity`'s `ProactivityStore` that a
 personal Hermes agent needs: the **goal** portfolio (durable cross-tick missions)
 and the **attempt** ledger that the governance envelope reads and writes. The
 tick/scheduler tables from the TS store are intentionally absent — Hermes owns

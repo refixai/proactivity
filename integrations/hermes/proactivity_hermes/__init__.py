@@ -1,4 +1,4 @@
-"""@refixai/proactivity — Hermes plugin.
+"""@refix/proactivity — Hermes plugin.
 
 Adds three things a stock Hermes agent lacks: a **governance envelope** over
 outbound actions (idempotency + per-tick cap + soft caps + audit trail), a

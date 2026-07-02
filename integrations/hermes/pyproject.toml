@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "proactivity-hermes"
 version = "0.1.0"
-description = "Proactive-agent governance, durable goals, and self-adjusting cadence for the Hermes agent framework — a @refixai/proactivity adapter."
+description = "Proactive-agent governance, durable goals, and self-adjusting cadence for the Hermes agent framework — a @refix/proactivity adapter."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = "Apache-2.0"
