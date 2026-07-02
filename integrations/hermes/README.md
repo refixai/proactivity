@@ -19,12 +19,22 @@ not a second framework.
 
 ## Install
 
+### Option A — Agent-assisted (recommended)
+
+Tell your Hermes agent:
+
+```
+Install and enable the proactivity plugin: run `pip install proactivity-hermes`, then `hermes plugins enable proactivity`. Confirm both commands succeeded.
+```
+
+### Option B — Manual
+
 ```bash
 pip install proactivity-hermes
 hermes plugins enable proactivity
 ```
 
-Enabling registers three tools (`goal`, `briefing`, `set_cadence`). Naming your
+Either way, enabling registers three tools (`goal`, `briefing`, `set_cadence`). Naming your
 outbound tools in `PROACTIVITY_GOVERNED_TOOLS` additionally wraps them in a
 `tool_execution` middleware that routes their calls through the envelope.
 

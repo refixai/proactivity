@@ -15,12 +15,22 @@ and reused verbatim rather than reimplemented.
 
 ## Install
 
+### Option A — Agent-assisted (recommended)
+
+Tell your OpenClaw agent:
+
+```
+Install and enable the proactivity plugin: run `openclaw plugins install npm:@refixai/proactivity-openclaw`, then `openclaw plugins enable proactivity`. Confirm both commands succeeded.
+```
+
+### Option B — Manual
+
 ```bash
 openclaw plugins install npm:@refixai/proactivity-openclaw
 openclaw plugins enable proactivity
 ```
 
-It registers three tools (`goal`, `briefing`, `set_cadence`) and two hooks:
+Either way, it registers three tools (`goal`, `briefing`, `set_cadence`) and two hooks:
 
 | Hook | What it governs |
 |---|---|

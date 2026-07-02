@@ -16,6 +16,22 @@
 
 Proactivity primitives for autonomous agents. Scheduling, governance, goals, and briefing, so your agent can act on its own without spamming, repeating itself, or running away.
 
+Already running [OpenClaw](https://github.com/openclaw/openclaw) or [Hermes](https://hermes-agent.nousresearch.com)? Paste this into your agent:
+
+**OpenClaw**
+
+```
+Install and enable the proactivity plugin: run `openclaw plugins install npm:@refixai/proactivity-openclaw`, then `openclaw plugins enable proactivity`. Confirm both commands succeeded. If either fails, follow https://github.com/refixai/proactivity/tree/main/integrations/openclaw.
+```
+
+**Hermes**
+
+```
+Install and enable the proactivity plugin: run `pip install proactivity-hermes`, then `hermes plugins enable proactivity`. Confirm both commands succeeded. If either fails, follow https://github.com/refixai/proactivity/tree/main/integrations/hermes.
+```
+
+Both add the governance envelope, durable goals, and a `set_cadence` tool to your existing agent. Config and honest limitations: [`integrations/openclaw`](integrations/openclaw), [`integrations/hermes`](integrations/hermes).
+
 ## The problem
 
 Frameworks like LangGraph and CrewAI give you a reasoning loop: you call it, it thinks, it returns. That is a reactive agent. A proactive one runs on its own. It wakes on its own schedule, notices what changed since it last looked, pursues goals it set earlier, and decides its own pace. None of that comes with the reasoning loop.
@@ -121,7 +137,7 @@ section wires in your reasoning loop and routes its actions through governance.
 ## Plugging in your agent
 
 A real tick hands the context to your reasoning loop and routes whatever it
-decides to do through governance. The seam is the same in every framework:
+decides to do through governance. The pattern is the same in every framework:
 
 1. Build a prompt from the tick context with `buildTickPrompt` (or assemble your own).
 2. Run your agent on it.
@@ -138,16 +154,16 @@ inside the `tick`. The one thing that differs is how the model's chosen actions
 reach `governance.dispatch`, and that comes down to whether the framework calls
 tools itself.
 
-| Framework | How actions reach governance |
-|-----------|------------------------------|
-| LangGraph | Govern the tool |
-| Vercel AI SDK | Govern the tool |
-| OpenAI SDK | Parse, then dispatch |
-| Anthropic SDK | Parse, then dispatch |
-| Mastra | Parse, then dispatch |
-| Eve | Govern the tool |
+| Framework | How actions reach governance | Runnable example |
+|-----------|------------------------------|------------------|
+| LangGraph | Govern the tool | [`examples/langgraph`](examples/langgraph) |
+| Vercel AI SDK | Govern the tool | same pattern: [`examples/langgraph`](examples/langgraph) |
+| OpenAI SDK | Parse, then dispatch | same pattern: [`examples/anthropic`](examples/anthropic) |
+| Anthropic SDK | Parse, then dispatch | [`examples/anthropic`](examples/anthropic) |
+| Mastra | Parse, then dispatch | same pattern: [`examples/anthropic`](examples/anthropic) |
+| Eve | Govern the tool | same pattern: [`examples/langgraph`](examples/langgraph) |
 
-Anything not listed fits one of these: govern the tool if the model calls tools itself, parse then dispatch if it returns actions for you to run.
+Anything not listed fits one of these: govern the tool if the model calls tools itself, parse then dispatch if it returns actions for you to run. Each pattern has one runnable, compile-checked example under [`examples/`](examples) with the real framework as a dependency; the pattern for every framework in the table is also shape-tested (against framework-shaped stand-ins, not the frameworks themselves) in [`src/integrations.test.ts`](src/integrations.test.ts).
 
 ### LangGraph or Vercel AI SDK: govern the tool
 
@@ -234,8 +250,12 @@ for (const action of plan.actions) {
 return { cadenceHint: plan.cadenceHint }
 ```
 
-Either shape gets the caps, idempotency, and audit trail for free. Runnable
-versions of both, across six frameworks, live in
+Either shape gets the caps, idempotency, and audit trail for free. A runnable
+example of each pattern lives in [`examples/`](examples) —
+[`examples/langgraph`](examples/langgraph) (govern the tool) and
+[`examples/anthropic`](examples/anthropic) (parse, then dispatch) — built
+against the real frameworks and typechecked in CI. The shape of the pattern
+for all six frameworks is additionally covered by simulation tests in
 [`src/integrations.test.ts`](src/integrations.test.ts).
 
 ## Core primitives
