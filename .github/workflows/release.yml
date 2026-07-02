@@ -1,0 +1,121 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "proactivity-v*"
+      - "proactivity-openclaw-v*"
+      - "proactivity-hermes-v*"
+
+jobs:
+  publish-sdk:
+    if: startsWith(github.ref, 'refs/tags/proactivity-v')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: refix
+          POSTGRES_PASSWORD: refix-password
+          POSTGRES_DB: proactivity_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#proactivity-v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag proactivity-v$TAG_VERSION does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+      - run: npm install -g npm@latest
+      - run: npm publish
+
+  publish-openclaw:
+    if: startsWith(github.ref, 'refs/tags/proactivity-openclaw-v')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    defaults:
+      run:
+        working-directory: integrations/openclaw
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: integrations/openclaw/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#proactivity-openclaw-v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag proactivity-openclaw-v$TAG_VERSION does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+      - run: npm install -g npm@latest
+      - run: npm publish
+
+  publish-hermes:
+    if: startsWith(github.ref, 'refs/tags/proactivity-hermes-v')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    defaults:
+      run:
+        working-directory: integrations/hermes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e . hermes-agent build
+      - run: |
+          for f in tests/test_*.py; do
+            echo "== $f =="
+            python3 "$f"
+          done
+      - name: Verify tag matches pyproject.toml version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#proactivity-hermes-v}"
+          PKG_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag proactivity-hermes-v$TAG_VERSION does not match pyproject.toml version $PKG_VERSION"
+            exit 1
+          fi
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: integrations/hermes/dist
