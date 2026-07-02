@@ -1,13 +1,13 @@
-// LangGraph + @refixai/proactivity: the "govern the tool" pattern.
+// LangGraph + @refix/proactivity: the "govern the tool" pattern.
 // The scheduler wakes the agent on a self-adjusting cadence; each tick a
 // LangGraph ReAct agent reasons over the briefing and calls send_email, whose
 // implementation routes through governance.dispatch (idempotency, caps, audit).
 import { ChatAnthropic } from "@langchain/anthropic";
 import { tool } from "@langchain/core/tools";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
-import { createHeartbeat, createScheduler, createTestStore } from "@refixai/proactivity";
-import { buildTickPrompt } from "@refixai/proactivity/prompts";
-import { createTimerAdapter } from "@refixai/proactivity/timer";
+import { createHeartbeat, createScheduler, createTestStore } from "@refix/proactivity";
+import { buildTickPrompt } from "@refix/proactivity/prompts";
+import { createTimerAdapter } from "@refix/proactivity/timer";
 import { z } from "zod";
 
 if (!process.env.ANTHROPIC_API_KEY) {

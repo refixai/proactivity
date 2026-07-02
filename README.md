@@ -1,4 +1,4 @@
-# @refixai/proactivity
+# @refix/proactivity
 
 <p align="center">
   <img src="https://img.shields.io/badge/LangGraph-000000?style=flat-square&logo=langchain&logoColor=white" alt="LangGraph" />
@@ -21,7 +21,7 @@ Already running [OpenClaw](https://github.com/openclaw/openclaw) or [Hermes](htt
 **OpenClaw**
 
 ```
-Install and enable the proactivity plugin: run `openclaw plugins install npm:@refixai/proactivity-openclaw`, then `openclaw plugins enable proactivity`. Confirm both commands succeeded. If either fails, follow https://github.com/refixai/proactivity/tree/main/integrations/openclaw.
+Install and enable the proactivity plugin: run `openclaw plugins install npm:@refix/proactivity-openclaw`, then `openclaw plugins enable proactivity`. Confirm both commands succeeded. If either fails, follow https://github.com/refixai/proactivity/tree/main/integrations/openclaw.
 ```
 
 **Hermes**
@@ -72,14 +72,14 @@ Most of this README is about governance because it has the most surface area, bu
 ## Install
 
 ```bash
-pnpm add @refixai/proactivity
+pnpm add @refix/proactivity
 ```
 
 Optional adapters (install what you use):
 
 ```bash
-pnpm add pg        # for @refixai/proactivity/postgres
-pnpm add bullmq    # for @refixai/proactivity/bullmq
+pnpm add pg        # for @refix/proactivity/postgres
+pnpm add bullmq    # for @refix/proactivity/bullmq
 ```
 
 ## Quick start
@@ -89,8 +89,8 @@ in-memory store and the timer adapter run entirely in-process. Swap in
 `createPostgresStore` and `createBullMQAdapter` for production.
 
 ```typescript
-import { createHeartbeat, createScheduler, createTestStore } from '@refixai/proactivity'
-import { createTimerAdapter } from '@refixai/proactivity/timer'
+import { createHeartbeat, createScheduler, createTestStore } from '@refix/proactivity'
+import { createTimerAdapter } from '@refix/proactivity/timer'
 
 const store = createTestStore()
 
@@ -175,7 +175,7 @@ then hand it to your graph:
 import { tool } from '@langchain/core/tools'
 import { createReactAgent } from '@langchain/langgraph/prebuilt'
 import { ChatOpenAI } from '@langchain/openai'
-import { buildTickPrompt } from '@refixai/proactivity/prompts'
+import { buildTickPrompt } from '@refix/proactivity/prompts'
 import { z } from 'zod'
 
 // ...as the `tick` of your createHeartbeat config:
@@ -270,8 +270,8 @@ for all six frameworks is additionally covered by simulation tests in
 The agent decides its own wake-up interval. It isn't a fixed cron: the agent reasons about how closely to watch based on what it observes.
 
 ```typescript
-import { createScheduler } from '@refixai/proactivity'
-import { createBullMQAdapter } from '@refixai/proactivity/bullmq'
+import { createScheduler } from '@refix/proactivity'
+import { createBullMQAdapter } from '@refix/proactivity/bullmq'
 
 const scheduler = createScheduler({
   adapter: createBullMQAdapter({ queueName: 'heartbeats', connection: { host: 'localhost', port: 6379 } }),
@@ -339,7 +339,7 @@ Governance never throws. Side-effect failures are caught and wrapped in a denial
 For complex agents, split reasoning into a planner (mutates goals, selects which to work on) and an executor (works on one goal at a time):
 
 ```typescript
-import { createPlanActHeartbeat } from '@refixai/proactivity'
+import { createPlanActHeartbeat } from '@refix/proactivity'
 
 const heartbeat = createPlanActHeartbeat({
   store,
@@ -372,11 +372,11 @@ const heartbeat = createPlanActHeartbeat({
 
 | Subpath | Purpose | Peer Dep |
 |---------|---------|----------|
-| `@refixai/proactivity` | Core primitives + `createTestStore` (zero deps) | none |
-| `@refixai/proactivity/postgres` | Production store (raw SQL, ships migrations) | `pg` |
-| `@refixai/proactivity/bullmq` | Production scheduler (self-rescheduling) | `bullmq` |
-| `@refixai/proactivity/timer` | setTimeout scheduler for development | none |
-| `@refixai/proactivity/prompts` | Tick / planner / executor prompt builders | none |
+| `@refix/proactivity` | Core primitives + `createTestStore` (zero deps) | none |
+| `@refix/proactivity/postgres` | Production store (raw SQL, ships migrations) | `pg` |
+| `@refix/proactivity/bullmq` | Production scheduler (self-rescheduling) | `bullmq` |
+| `@refix/proactivity/timer` | setTimeout scheduler for development | none |
+| `@refix/proactivity/prompts` | Tick / planner / executor prompt builders | none |
 
 ### Postgres store
 
@@ -384,7 +384,7 @@ const heartbeat = createPlanActHeartbeat({
 already have, so it can share your app's existing connection:
 
 ```typescript
-import { createPostgresStore } from '@refixai/proactivity/postgres'
+import { createPostgresStore } from '@refix/proactivity/postgres'
 
 // Pass a connection string (the SDK creates and owns the pool)...
 const store = createPostgresStore({ connectionString: process.env.DATABASE_URL })

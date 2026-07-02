@@ -1,6 +1,6 @@
 # LangGraph example
 
-A self-running LangGraph agent on `@refixai/proactivity`. It demonstrates the
+A self-running LangGraph agent on `@refix/proactivity`. It demonstrates the
 **govern the tool** pattern: the model calls tools itself, so each side-effecting
 tool wraps `governance.dispatch` — the same pattern applies to the Vercel AI
 SDK, Eve, and any framework where the model calls tools.

@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.109.1",
-    "@refixai/proactivity": "file:../.."
+    "@refix/proactivity": "file:../.."
   },
   "devDependencies": {
     "@types/node": "26.1.0",

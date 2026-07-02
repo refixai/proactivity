@@ -1,7 +1,7 @@
 # proactivity-hermes
 
 A [Hermes](https://hermes-agent.nousresearch.com) plugin that adds the
-[`@refixai/proactivity`](../../) primitives a stock agent lacks:
+[`@refix/proactivity`](../../) primitives a stock agent lacks:
 
 - Governance envelope: every governed tool call passes through idempotency,
   a per-tick action cap, and pluggable soft caps before it fires, with a full

@@ -12,7 +12,7 @@ import {
   type GovernanceHandle,
   type ProactivityStore,
   type SoftCap,
-} from "@refixai/proactivity";
+} from "@refix/proactivity";
 import { createJsonStore } from "./store.js";
 import { briefingTool, goalTool, setCadenceTool } from "./tools.js";
 

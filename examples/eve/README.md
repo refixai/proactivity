@@ -1,6 +1,6 @@
 # Eve example — govern the tool, Eve-native trigger
 
-A proactive [Eve](https://github.com/vercel/eve) agent on `@refixai/proactivity`:
+A proactive [Eve](https://github.com/vercel/eve) agent on `@refix/proactivity`:
 a personal agent that watches for conversations you've left on read and nudges
 you to reply — **once per thread**, because the governance envelope won't let it
 nag you twice about the same conversation.
@@ -46,7 +46,7 @@ it doesn't surface this; the real Eve runtime does.
 
 ```bash
 pnpm install
-pnpm typecheck        # tsc --noEmit against real eve + @refixai/proactivity types
+pnpm typecheck        # tsc --noEmit against real eve + @refix/proactivity types
 pnpm exec eve build   # fully compiles the agent: discovers the tools, hook,
                       # schedule (cron parsed), and channel, and bundles the SDK
 ```
@@ -100,7 +100,7 @@ Use `@ai-sdk/openai` (version-aligned with Eve's AI SDK), not
 
 The demo uses an in-memory store, so goals and the ledger reset on restart —
 swap `createTestStore()` in `agent/proactivity.ts` for the postgres adapter
-(`@refixai/proactivity/postgres`) to make them durable across restarts (and to
+(`@refix/proactivity/postgres`) to make them durable across restarts (and to
 share state across processes/replays).
 
 ## Honest limitations

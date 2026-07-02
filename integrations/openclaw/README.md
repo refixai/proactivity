@@ -1,7 +1,7 @@
-# @refixai/proactivity-openclaw
+# @refix/proactivity-openclaw
 
 An [OpenClaw](https://github.com/openclaw/openclaw) plugin that adds the
-[`@refixai/proactivity`](../../) primitives a stock agent lacks:
+[`@refix/proactivity`](../../) primitives a stock agent lacks:
 
 - Governance envelope: every outbound message (and any tool you opt in)
   passes through idempotency, a per-tick action cap, and pluggable soft caps
@@ -20,13 +20,13 @@ and reused verbatim rather than reimplemented.
 Tell your OpenClaw agent:
 
 ```
-Install and enable the proactivity plugin: run `openclaw plugins install npm:@refixai/proactivity-openclaw`, then `openclaw plugins enable proactivity`. Confirm both commands succeeded.
+Install and enable the proactivity plugin: run `openclaw plugins install npm:@refix/proactivity-openclaw`, then `openclaw plugins enable proactivity`. Confirm both commands succeeded.
 ```
 
 ### Option B — Manual
 
 ```bash
-openclaw plugins install npm:@refixai/proactivity-openclaw
+openclaw plugins install npm:@refix/proactivity-openclaw
 openclaw plugins enable proactivity
 ```
 
@@ -71,7 +71,7 @@ Under `plugins.entries.proactivity.config` in `openclaw.json`:
 ## Develop
 
 ```bash
-npm install        # links @refixai/proactivity from ../.. (build the SDK first)
+npm install        # links @refix/proactivity from ../.. (build the SDK first)
 npm run typecheck  # checks the OpenClaw glue against OpenClaw's real types
 npm test           # drives the real governance + tools (no OpenClaw needed)
 ```

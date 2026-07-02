@@ -1,5 +1,5 @@
 {
-  "name": "@refixai/proactivity",
+  "name": "@refix/proactivity",
   "version": "0.1.0",
   "description": "Proactivity primitives for autonomous agents — scheduling, governance, goals, briefing",
   "type": "module",

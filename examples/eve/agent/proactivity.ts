@@ -12,14 +12,14 @@
 // rebuild the envelope from them + the shared `store`. Idempotency (nudge once
 // per thread) still holds because it's keyed on `store` + `tickId`, not on the
 // in-memory handle.
-import { createTestStore } from "@refixai/proactivity";
+import { createTestStore } from "@refix/proactivity";
 import { defineState } from "eve/context";
 
 // In-memory store for the demo. Because governance is rebuilt per tool call, the
 // store is also what carries idempotency + the audit ledger across those calls,
 // so it must be shared. createTestStore() is a per-process singleton — fine for
 // a single `eve start`; swap it for the postgres adapter
-// (@refixai/proactivity/postgres) for a real (multi-process / replayed) deploy.
+// (@refix/proactivity/postgres) for a real (multi-process / replayed) deploy.
 export const store = createTestStore();
 
 export const ENTITY_ID = "eve-demo";

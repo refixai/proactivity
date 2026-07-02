@@ -25,7 +25,7 @@ import type {
   InsertAttempt,
   InsertAttemptResult,
   ProactivityStore,
-} from "@refixai/proactivity";
+} from "@refix/proactivity";
 
 const reviveGoal = (g: GoalRecord): GoalRecord => ({
   ...g,

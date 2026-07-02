@@ -11,7 +11,7 @@
 // can't live there. Idempotency survives the rebuild because it's enforced by
 // the store on `tickId`, not by the in-memory handle. Returning the outcome lets
 // the model see "taken" or "hard_denied" and stop instead of retrying blindly.
-import { createGovernance, createLedger } from "@refixai/proactivity";
+import { createGovernance, createLedger } from "@refix/proactivity";
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { CAPS, ENTITY_ID, store, tickState } from "../proactivity.js";

@@ -6,9 +6,9 @@
 // Mastra — only the SDK call changes.
 
 import Anthropic from '@anthropic-ai/sdk'
-import { createHeartbeat, createScheduler, createTestStore } from '@refixai/proactivity'
-import { createTimerAdapter } from '@refixai/proactivity/timer'
-import { buildTickPrompt } from '@refixai/proactivity/prompts'
+import { createHeartbeat, createScheduler, createTestStore } from '@refix/proactivity'
+import { createTimerAdapter } from '@refix/proactivity/timer'
+import { buildTickPrompt } from '@refix/proactivity/prompts'
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error('Set ANTHROPIC_API_KEY to run this example.')

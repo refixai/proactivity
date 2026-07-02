@@ -15,7 +15,7 @@ import {
   type GoalMutation,
   type ProactivityStore,
   validateGoalMutations,
-} from "@refixai/proactivity";
+} from "@refix/proactivity";
 
 const exec = promisify(execFile);
 

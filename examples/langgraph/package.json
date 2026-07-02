@@ -10,7 +10,7 @@
     "@langchain/anthropic": "1.5.1",
     "@langchain/core": "1.2.1",
     "@langchain/langgraph": "1.4.7",
-    "@refixai/proactivity": "file:../..",
+    "@refix/proactivity": "file:../..",
     "zod": "4.4.3"
   },
   "devDependencies": {

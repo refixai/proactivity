@@ -1,5 +1,5 @@
 /**
- * @refixai/proactivity — OpenClaw plugin entry.
+ * @refix/proactivity — OpenClaw plugin entry.
  *
  * Adds a governance envelope over outbound actions, a durable goal portfolio,
  * and a cadence tool. Runs the SDK's *actual* governance in-process (see

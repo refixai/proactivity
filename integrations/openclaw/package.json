@@ -1,7 +1,7 @@
 {
-  "name": "@refixai/proactivity-openclaw",
+  "name": "@refix/proactivity-openclaw",
   "version": "0.1.0",
-  "description": "Governance, durable goals, and cadence for a proactive OpenClaw agent — a @refixai/proactivity plugin.",
+  "description": "Governance, durable goals, and cadence for a proactive OpenClaw agent — a @refix/proactivity plugin.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "Refix AI",
@@ -19,7 +19,7 @@
     "extensions": ["./dist/index.js"],
     "runtimeExtensions": ["./dist/index.js"],
     "install": {
-      "npmSpec": "@refixai/proactivity-openclaw",
+      "npmSpec": "@refix/proactivity-openclaw",
       "defaultChoice": "npm",
       "minHostVersion": ">=2026.6.10"
     },
@@ -28,7 +28,7 @@
     "release": { "publishToClawHub": false, "publishToNpm": true }
   },
   "dependencies": {
-    "@refixai/proactivity": "^0.1.0",
+    "@refix/proactivity": "^0.1.0",
     "typebox": "^1.1.39"
   },
   "peerDependencies": {
