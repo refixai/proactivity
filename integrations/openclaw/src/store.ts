@@ -114,6 +114,7 @@ export const createJsonStore = (filePath: string, entityId: string): Proactivity
           if (m.findings !== undefined) g.findings = m.findings;
           if (m.nextActions !== undefined) g.nextActions = m.nextActions;
           if (m.priority !== undefined) g.priority = m.priority;
+          if (m.status !== undefined) g.status = m.status;
         } else if (m.op === "reprioritize") {
           if (m.priority !== undefined) g.priority = m.priority;
         } else if (m.op === "complete") {

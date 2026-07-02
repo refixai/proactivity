@@ -56,7 +56,9 @@ export const createScheduler = (config: SchedulerConfig): Scheduler => {
     async triggerNow(entityId) {
       const jobId = identity(entityId);
       await adapter.remove(jobId);
-      await store.upsertState(entityId, { enabled: true });
+      // Deliberately no `enabled` write: a manual poke must not resurrect a
+      // stopped entity. fireAndReschedule re-arms only when the store says
+      // enabled, so a stopped entity gets exactly one tick and stays stopped.
       await fireAndReschedule(entityId, "manual");
     },
 

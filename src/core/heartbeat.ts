@@ -76,6 +76,7 @@ export const createHeartbeat = (config: HeartbeatConfig): Heartbeat => {
           completedAt: new Date(),
           actionsTakenCount: ledger.countActionsTaken(),
           cadenceHintMs,
+          cadenceReasoning: callbackResult.cadenceHint?.reasoning ?? null,
         });
 
         await store.upsertState(entityId, {
@@ -117,7 +118,9 @@ export const createPlanActHeartbeat = (config: PlanActConfig): Heartbeat => {
         const plan = await config.planner({ boundary, briefing, goals });
 
         if (plan.goalMutations.length > 0) {
-          const mutationErrors = validateGoalMutations(plan.goalMutations);
+          // `goals` is the entity's active+paused portfolio, so validation also
+          // enforces the status machine (no mutating terminal or foreign goals).
+          const mutationErrors = validateGoalMutations(plan.goalMutations, goals);
           if (mutationErrors.length > 0) {
             throw new Error(`Invalid goal mutations from planner: ${mutationErrors.join("; ")}`);
           }
@@ -127,7 +130,7 @@ export const createPlanActHeartbeat = (config: PlanActConfig): Heartbeat => {
         const ledger = createLedger();
         let goalsWorkedCount = 0;
 
-        for (const selected of plan.selectedGoals) {
+        for (const [orderIndex, selected] of plan.selectedGoals.entries()) {
           const goal = await store.getGoal(selected.goalId);
           // getGoal keys on id alone; reject a planner-supplied id from another entity.
           if (!goal || goal.entityId !== entityId) continue;
@@ -136,23 +139,29 @@ export const createPlanActHeartbeat = (config: PlanActConfig): Heartbeat => {
           const goalTickId = await store.insertGoalTick({
             goalId: goal.id,
             tickId,
-            orderIndex: goalsWorkedCount,
+            orderIndex,
           });
 
+          // The ledger, not the executor's report, decides whether the pass
+          // acted — an executor (or the LLM behind it) cannot misreport it.
+          // Derived in the catch too: actions dispatched before a crash are real.
           try {
             const passResult = await config.executor({ goal, goalTickId, boundary, briefing, governance });
+            const acted = ledger.countActionsForPass(goalTickId) > 0;
 
             await store.updateGoalTick(goalTickId, {
-              acted: passResult.acted,
+              acted,
               summary: passResult.summary,
             });
 
-            if (passResult.acted) goalsWorkedCount++;
+            if (acted) goalsWorkedCount++;
           } catch (err) {
+            const acted = ledger.countActionsForPass(goalTickId) > 0;
             await store.updateGoalTick(goalTickId, {
-              acted: false,
+              acted,
               summary: `Executor error: ${err instanceof Error ? err.message : String(err)}`,
             });
+            if (acted) goalsWorkedCount++;
           }
         }
 
@@ -165,6 +174,7 @@ export const createPlanActHeartbeat = (config: PlanActConfig): Heartbeat => {
           goalsWorkedCount,
           actionsTakenCount: ledger.countActionsTaken(),
           cadenceHintMs,
+          cadenceReasoning: plan.cadenceHint?.reasoning ?? null,
         });
 
         return {

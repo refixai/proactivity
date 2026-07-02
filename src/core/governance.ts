@@ -50,6 +50,7 @@ export const createGovernance = (
         ...request,
         tickId,
         idempotencyKey,
+        outcome: "hard_denied",
         denialReason: `Per-tick cap reached (${caps.perTick})`,
       });
     }
@@ -60,6 +61,7 @@ export const createGovernance = (
         ...request,
         tickId,
         idempotencyKey,
+        outcome: "hard_denied",
         denialReason: `Per-pass cap reached (${caps.perPass})`,
       });
     }
@@ -75,7 +77,10 @@ export const createGovernance = (
           ...request,
           tickId,
           idempotencyKey,
-          denialReason: result.warning ?? `Soft cap "${sc.name}" triggered`,
+          outcome: "soft_cap_denied",
+          denialReason:
+            result.warning ??
+            `Soft cap "${sc.name}" triggered — supply an overrideReason to proceed`,
         });
       }
     }
@@ -153,16 +158,21 @@ const recordDenied = async (
   opts: DispatchRequest & {
     tickId: string;
     idempotencyKey: string;
+    outcome: "hard_denied" | "soft_cap_denied";
     denialReason: string;
   },
 ): Promise<DispatchResult> => {
+  // The audit row gets a suffixed key: only delivered/pending attempts may
+  // claim the canonical key. If a denial claimed it, a soft_cap_denied action
+  // re-dispatched with an overrideReason would collide with its own denial row
+  // and be rejected as a duplicate — the documented retry path would never work.
   const result = await store.insertAttempt({
     goalId: opts.goalId,
     tickId: opts.tickId,
     goalTickId: opts.goalTickId,
     actionType: opts.actionType,
-    idempotencyKey: opts.idempotencyKey,
-    governanceOutcome: "hard_denied",
+    idempotencyKey: `${opts.idempotencyKey}#denied:${crypto.randomUUID()}`,
+    governanceOutcome: opts.outcome,
     reasoning: opts.reasoning,
     denialReason: opts.denialReason,
     overrideReason: null,
@@ -173,7 +183,7 @@ const recordDenied = async (
   const attemptId = result.kind === "inserted" ? result.attemptId : result.prior.attemptId;
 
   return {
-    governanceOutcome: "hard_denied",
+    governanceOutcome: opts.outcome,
     attemptId,
     idempotencyKey: opts.idempotencyKey,
     denialReason: opts.denialReason,

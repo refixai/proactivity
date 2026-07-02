@@ -197,6 +197,59 @@ describe("createHeartbeat", () => {
     expect(performed).not.toHaveBeenCalled();
   });
 
+  test("dry-run actions consume cap budget like live ones", async () => {
+    const store = createTestStore();
+    await store.upsertState("e1", { enabled: true });
+    const outcomes: string[] = [];
+
+    const heartbeat = createHeartbeat({
+      store,
+      sources: [],
+      governance: { store, caps: { perPass: 5, perTick: 2 }, dryRun: true },
+      cadence: makeCadenceConfig(),
+      tick: async (ctx) => {
+        for (let i = 0; i < 3; i++) {
+          const r = await ctx.governance.dispatch({
+            goalId: "g1",
+            goalTickId: "gt1",
+            actionType: "send_message",
+            target: { userId: `u${i}` },
+            reasoning: "test",
+            perform: async () => {},
+          });
+          outcomes.push(r.governanceOutcome);
+        }
+        return {};
+      },
+    });
+
+    await heartbeat.runTick("e1", "manual");
+    // The third draft is denied: a dry run must preview the same action
+    // volume live mode would allow, or the operator reviews a fantasy.
+    expect(outcomes).toEqual(["pending_approval", "pending_approval", "hard_denied"]);
+  });
+
+  test("cadence reasoning is persisted on the tick row", async () => {
+    const store = createTestStore();
+    await store.upsertState("e1", { enabled: true });
+
+    const heartbeat = createHeartbeat({
+      store,
+      sources: [],
+      governance: makeGovernanceConfig(store),
+      cadence: makeCadenceConfig(),
+      tick: async () => ({
+        cadenceHint: { nextTickMs: 120_000, reasoning: "watching a fresh signal" },
+      }),
+    });
+
+    await heartbeat.runTick("e1", "manual");
+
+    const tick = await store.getLatestTick("e1");
+    expect(tick!.cadenceHintMs).toBe(120_000);
+    expect(tick!.cadenceReasoning).toBe("watching a fresh signal");
+  });
+
   test("soft cap denies action without override", async () => {
     const store = createTestStore();
     await store.upsertState("e1", { enabled: true });
@@ -222,7 +275,7 @@ describe("createHeartbeat", () => {
           reasoning: "test",
           perform: performed,
         });
-        expect(r.governanceOutcome).toBe("hard_denied");
+        expect(r.governanceOutcome).toBe("soft_cap_denied");
         expect(r.denialReason).toContain("Too many messages recently");
         return {};
       },
@@ -259,6 +312,50 @@ describe("createHeartbeat", () => {
           perform: performed,
         });
         expect(r.governanceOutcome).toBe("soft_cap_overridden");
+        return {};
+      },
+    });
+
+    await heartbeat.runTick("e1", "manual");
+    expect(performed).toHaveBeenCalledOnce();
+  });
+
+  test("soft cap denial is retriable by re-dispatching with an overrideReason", async () => {
+    const store = createTestStore();
+    await store.upsertState("e1", { enabled: true });
+    const performed = vi.fn();
+
+    const heartbeat = createHeartbeat({
+      store,
+      sources: [],
+      governance: {
+        ...makeGovernanceConfig(store),
+        softCaps: [{
+          name: "recent_contact",
+          evaluate: () => ({ triggered: true, warning: "Contacted recently" }),
+        }],
+      },
+      cadence: makeCadenceConfig(),
+      tick: async (ctx) => {
+        const request = {
+          goalId: "g1",
+          goalTickId: "gt1",
+          actionType: "send_message",
+          target: { userId: "u1" },
+          reasoning: "test",
+          perform: async () => { performed(); },
+        };
+
+        const denied = await ctx.governance.dispatch(request);
+        expect(denied.governanceOutcome).toBe("soft_cap_denied");
+
+        // The denial's audit row must not have burned the idempotency key —
+        // the same action retried with an override goes through.
+        const retried = await ctx.governance.dispatch({
+          ...request,
+          overrideReason: "user asked for this explicitly",
+        });
+        expect(retried.governanceOutcome).toBe("soft_cap_overridden");
         return {};
       },
     });
@@ -322,7 +419,15 @@ describe("createPlanActHeartbeat", () => {
       executor: async (ctx) => {
         executorCalled();
         expect(ctx.goal.id).toBe("g1");
-        return { acted: true, summary: "did thing" };
+        await ctx.governance.dispatch({
+          goalId: ctx.goal.id,
+          goalTickId: ctx.goalTickId,
+          actionType: "act",
+          target: { goalId: ctx.goal.id },
+          reasoning: "work the goal",
+          perform: async () => {},
+        });
+        return { summary: "did thing" };
       },
     });
 
@@ -332,6 +437,57 @@ describe("createPlanActHeartbeat", () => {
     expect(result.status).toBe("completed");
     expect(result.goalsWorkedCount).toBe(1);
     expect(result.nextCadenceMs).toBe(300_000);
+
+    const tick = await store.getLatestTick("e1");
+    expect(tick!.cadenceReasoning).toBe("follow up");
+  });
+
+  test("acted is derived from the governance ledger, not the executor's report", async () => {
+    const store = createTestStore();
+    await store.upsertState("e1", { enabled: true });
+
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
+    await store.applyGoalMutations(tickId, [
+      { op: "create", goalId: "g-liar", title: "L", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
+      { op: "create", goalId: "g-crash", title: "C", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
+    ]);
+    await store.updateTick(tickId, { status: "completed", completedAt: new Date() });
+
+    const heartbeat = createPlanActHeartbeat({
+      store,
+      sources: [],
+      governance: makeGovernanceConfig(store),
+      cadence: makeCadenceConfig(),
+      planner: async () => ({
+        goalMutations: [],
+        selectedGoals: [
+          { goalId: "g-liar", reasoning: "first" },
+          { goalId: "g-crash", reasoning: "second" },
+        ],
+        skippedGoals: [],
+      }),
+      executor: async (ctx) => {
+        if (ctx.goal.id === "g-liar") {
+          // Claims work happened but never dispatched — must not count.
+          return { summary: "sent three emails (it did not)" };
+        }
+        // Dispatches for real, then crashes — the action still counts.
+        await ctx.governance.dispatch({
+          goalId: ctx.goal.id,
+          goalTickId: ctx.goalTickId,
+          actionType: "act",
+          target: { goalId: ctx.goal.id },
+          reasoning: "real work",
+          perform: async () => {},
+        });
+        throw new Error("boom after acting");
+      },
+    });
+
+    const result = await heartbeat.runTick("e1", "manual");
+    expect(result.status).toBe("completed");
+    expect(result.goalsWorkedCount).toBe(1);
+    expect(result.actionsTakenCount).toBe(1);
   });
 
   test("executor dispatches through governance with the provided goalTickId", async () => {
@@ -365,7 +521,7 @@ describe("createPlanActHeartbeat", () => {
           reasoning: "follow up",
           perform: async () => { performed(); },
         });
-        return { acted: governanceOutcome === "taken", summary: "done" };
+        return { summary: `outcome: ${governanceOutcome}` };
       },
     });
 
@@ -409,7 +565,15 @@ describe("createPlanActHeartbeat", () => {
       executor: async (ctx) => {
         executorCalls.push(ctx.goal.id);
         if (ctx.goal.id === "g1") throw new Error("executor boom");
-        return { acted: true, summary: "ok" };
+        await ctx.governance.dispatch({
+          goalId: ctx.goal.id,
+          goalTickId: ctx.goalTickId,
+          actionType: "act",
+          target: { goalId: ctx.goal.id },
+          reasoning: "work the goal",
+          perform: async () => {},
+        });
+        return { summary: "ok" };
       },
     });
 
@@ -438,7 +602,7 @@ describe("createPlanActHeartbeat", () => {
       }),
       executor: async () => {
         executorCalled();
-        return { acted: false, summary: "" };
+        return { summary: "" };
       },
     });
 

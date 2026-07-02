@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS proactivity_ticks (
   goals_worked_count integer NOT NULL DEFAULT 0,
   actions_taken_count integer NOT NULL DEFAULT 0,
   cadence_hint_ms integer,
+  cadence_reasoning text,
   error text,
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (entity_id, tick_number)
@@ -120,6 +121,7 @@ const toTickRecord = (row: Record<string, unknown>): TickRecord => ({
   goalsWorkedCount: row.goals_worked_count as number,
   actionsTakenCount: row.actions_taken_count as number,
   cadenceHintMs: row.cadence_hint_ms as number | null,
+  cadenceReasoning: row.cadence_reasoning as string | null,
   error: row.error as string | null,
 });
 
@@ -219,6 +221,7 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
       if (patch.goalsWorkedCount !== undefined) { setClauses.push(`goals_worked_count = $${idx++}`); values.push(patch.goalsWorkedCount); }
       if (patch.actionsTakenCount !== undefined) { setClauses.push(`actions_taken_count = $${idx++}`); values.push(patch.actionsTakenCount); }
       if (patch.cadenceHintMs !== undefined) { setClauses.push(`cadence_hint_ms = $${idx++}`); values.push(patch.cadenceHintMs); }
+      if (patch.cadenceReasoning !== undefined) { setClauses.push(`cadence_reasoning = $${idx++}`); values.push(patch.cadenceReasoning); }
       if (patch.error !== undefined) { setClauses.push(`error = $${idx++}`); values.push(patch.error); }
 
       if (setClauses.length === 0) return;
@@ -285,6 +288,7 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
             if (m.findings !== undefined) { sets.push(`findings = $${i++}`); vals.push(m.findings); }
             if (m.nextActions !== undefined) { sets.push(`next_actions = $${i++}`); vals.push(m.nextActions); }
             if (m.priority !== undefined) { sets.push(`priority = $${i++}`); vals.push(m.priority); }
+            if (m.status !== undefined) { sets.push(`status = $${i++}`); vals.push(m.status); }
             // entity_id scope: an LLM-supplied goalId can't reach another entity's goal.
             vals.push(entityId);
             await client.query(`UPDATE proactivity_goals SET ${sets.join(", ")} WHERE id = $1 AND entity_id = $${i}`, vals);

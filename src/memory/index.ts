@@ -67,6 +67,7 @@ export const createTestStore = (): ProactivityStore => {
         goalsWorkedCount: 0,
         actionsTakenCount: 0,
         cadenceHintMs: null,
+        cadenceReasoning: null,
         error: null,
       });
       return { tickId, tickNumber, startedAt };
@@ -151,6 +152,7 @@ export const createTestStore = (): ProactivityStore => {
             if (m.findings !== undefined) patch.findings = m.findings;
             if (m.nextActions !== undefined) patch.nextActions = m.nextActions;
             if (m.priority !== undefined) patch.priority = m.priority;
+            if (m.status !== undefined) patch.status = m.status;
           } else if (m.op === "reprioritize") {
             if (m.priority !== undefined) patch.priority = m.priority;
           } else if (m.op === "complete") {

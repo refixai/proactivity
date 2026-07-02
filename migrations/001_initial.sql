@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS proactivity_ticks (
   goals_worked_count integer NOT NULL DEFAULT 0,
   actions_taken_count integer NOT NULL DEFAULT 0,
   cadence_hint_ms integer,
+  cadence_reasoning text,
   error text,
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (entity_id, tick_number)

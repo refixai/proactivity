@@ -136,6 +136,24 @@ describe("createTestStore", () => {
     expect((await store.getGoal(goal.id))!.status).toBe("archived");
   });
 
+  test("update status resumes a paused goal", async () => {
+    const store = makeStore();
+    const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
+
+    await store.applyGoalMutations(tickId, [
+      { op: "create", goalId: "g1", title: "T", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
+    ]);
+    await store.applyGoalMutations(tickId, [
+      { op: "pause", goalId: "g1", reasoning: "waiting on user" },
+    ]);
+    expect((await store.getGoal("g1"))!.status).toBe("paused");
+
+    await store.applyGoalMutations(tickId, [
+      { op: "update", goalId: "g1", status: "active", reasoning: "user replied" },
+    ]);
+    expect((await store.getGoal("g1"))!.status).toBe("active");
+  });
+
   test("applyGoalMutations can't mutate another entity's goal", async () => {
     const store = makeStore();
     // e1 owns a goal; e2's tick tries to archive it by id.

@@ -97,12 +97,14 @@ describe("createPostgresStore", () => {
       completedAt: new Date(),
       actionsTakenCount: 2,
       cadenceHintMs: 60_000,
+      cadenceReasoning: "waiting on replies",
     });
 
     const tick = await store.getLatestTick("e1");
     expect(tick!.status).toBe("completed");
     expect(tick!.actionsTakenCount).toBe(2);
     expect(tick!.cadenceHintMs).toBe(60_000);
+    expect(tick!.cadenceReasoning).toBe("waiting on replies");
   });
 
   test("getPreviousTickStartedAt returns prior tick time", async () => {
@@ -177,6 +179,16 @@ describe("createPostgresStore", () => {
       { op: "update", goalId: goal.id, findings: "new finding", reasoning: "learned something" },
     ]);
     expect((await store.getGoal(goal.id))!.findings).toBe("new finding");
+
+    await store.applyGoalMutations(tickId, [
+      { op: "pause", goalId: goal.id, reasoning: "waiting on user" },
+    ]);
+    expect((await store.getGoal(goal.id))!.status).toBe("paused");
+
+    await store.applyGoalMutations(tickId, [
+      { op: "update", goalId: goal.id, status: "active", reasoning: "user replied" },
+    ]);
+    expect((await store.getGoal(goal.id))!.status).toBe("active");
 
     await store.applyGoalMutations(tickId, [
       { op: "complete", goalId: goal.id, reasoning: "done condition met" },

@@ -15,6 +15,9 @@ export type TickRecord = {
   goalsWorkedCount: number;
   actionsTakenCount: number;
   cadenceHintMs: number | null;
+  // Why the agent chose that cadence. Persisted so the next tick (or an
+  // operator) can see the pacing rationale, not just the number.
+  cadenceReasoning: string | null;
   error: string | null;
 };
 
@@ -46,6 +49,7 @@ export type TickPatch = Partial<
     | "goalsWorkedCount"
     | "actionsTakenCount"
     | "cadenceHintMs"
+    | "cadenceReasoning"
     | "error"
   >
 >;
@@ -103,6 +107,9 @@ export type GoalMutation = {
   findings?: string;
   nextActions?: string;
   priority?: GoalPriority;
+  // update only: the resume/pause path (paused → active and back). Terminal
+  // states are reached through the complete/archive ops, never by update.
+  status?: "active" | "paused";
   reasoning: string;
 };
 
@@ -116,7 +123,12 @@ export type InsertGoalTick = {
 
 export type GovernanceOutcome =
   | "taken"
+  // Terminal for this action: idempotency duplicate, cap reached, or the side
+  // effect itself failed. Do not retry within the tick.
   | "hard_denied"
+  // A soft cap held the action. Retriable: re-dispatch with an overrideReason
+  // if the action is genuinely warranted.
+  | "soft_cap_denied"
   | "soft_cap_overridden"
   | "pending_approval";
 
@@ -192,8 +204,10 @@ export type PlanOutput = {
   cadenceHint?: CadenceHint;
 };
 
+// Whether the pass acted is not part of the report: the heartbeat derives it
+// from the governance ledger (delivered actions for this pass), so an executor
+// (or the LLM behind it) cannot misreport what it did.
 export type PassResult = {
-  acted: boolean;
   summary: string;
   skipReason?: string;
 };

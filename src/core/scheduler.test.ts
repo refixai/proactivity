@@ -144,6 +144,35 @@ describe("createScheduler", () => {
     expect(state!.nextScheduledTickAt).toBeInstanceOf(Date);
   });
 
+  test("triggerNow on a stopped entity runs one tick without re-enabling or re-arming", async () => {
+    vi.useFakeTimers();
+    const store = createTestStore();
+    const adapter = createTimerAdapter();
+    const onTick = vi.fn(async (): Promise<TickResult> => ({
+      tickId: "t1", status: "completed", goalsWorkedCount: 0, actionsTakenCount: 0, nextCadenceMs: 100,
+    }));
+
+    const scheduler = createScheduler({
+      adapter,
+      store,
+      cadence: makeCadenceConfig(),
+      identity: (id) => `job:${id}`,
+      onTick,
+    });
+
+    await store.upsertState("e1", { enabled: false });
+    await scheduler.triggerNow("e1");
+
+    expect(onTick).toHaveBeenCalledWith("e1", "manual");
+    expect(onTick).toHaveBeenCalledTimes(1);
+
+    // No resurrection: the loop stays down and the entity stays stopped.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(onTick).toHaveBeenCalledTimes(1);
+    expect((await store.getState("e1"))!.enabled).toBe(false);
+    vi.useRealTimers();
+  });
+
   test("seedFromStore re-enqueues entities with scheduled ticks", async () => {
     const store = createTestStore();
     const adapter = createTimerAdapter();

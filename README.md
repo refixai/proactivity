@@ -189,7 +189,8 @@ tick: async ({ briefing, goals, governance, boundary }) => {
   })
 
   // The model calls send_email; the side effect routes through governance.
-  // Returning the outcome lets the model see "taken" or "hard_denied" and re-plan.
+  // Returning the outcome lets the model see "taken", "hard_denied" (terminal),
+  // or "soft_cap_denied" (retriable with an overrideReason) and re-plan.
   const sendEmail = tool(
     async ({ userId, body }) => {
       const { governanceOutcome } = await governance.dispatch({
@@ -304,7 +305,7 @@ const sources = [
 
 Persistent goals that survive across ticks. The agent pursues missions it set for itself, not just reacting to signals.
 
-Goals have a lifecycle (`active → paused → completed → archived`), priority levels, and mutation validation that rejects contradictory batches such as creating and archiving the same goal at once.
+Goals have a lifecycle (`active → paused → completed → archived`), priority levels, and mutation validation that enforces the status machine on LLM-emitted batches: at most one mutation per goal per batch, terminal and unknown goals are immutable, pause requires active, and `update`'s `status` field is the pause/resume path.
 
 ### Governance envelope: safe side effects
 
@@ -312,8 +313,8 @@ Every action the agent takes goes through governance, which handles:
 
 - Idempotency: deterministic keys prevent duplicate actions across retries
 - Hard caps: per-pass and per-tick action limits (a hard stop with no override)
-- Soft caps: warnings with optional override reasoning
-- Dry-run mode: records every action as `pending_approval` without executing it
+- Soft caps: denied with the retriable `soft_cap_denied` outcome — re-dispatch with an `overrideReason` when the action is genuinely warranted
+- Dry-run mode: records every action as `pending_approval` without executing it; drafts still consume cap budget, so a dry run previews the same volume live mode would allow
 - Audit trail: every attempt recorded with its outcome, reasoning, and error
 
 ```typescript
@@ -326,7 +327,9 @@ const result = await governance.dispatch({
   perform: async () => { await slack.sendDm('U123', 'Hey, checking in!') },
 })
 
-// result.governanceOutcome: 'taken' | 'hard_denied' | 'soft_cap_overridden' | 'pending_approval'
+// result.governanceOutcome:
+//   'taken' | 'hard_denied' | 'soft_cap_denied' | 'soft_cap_overridden' | 'pending_approval'
+// hard_denied is terminal for this tick; soft_cap_denied is retriable with an overrideReason.
 ```
 
 Governance never throws. Side-effect failures are caught and wrapped in a denial result.
@@ -351,14 +354,16 @@ const heartbeat = createPlanActHeartbeat({
   executor: async ({ goal, goalTickId, governance }) => {
     // Work on a single goal. The goal-tick is already open, so route side
     // effects straight through governance.
-    const { governanceOutcome } = await governance.dispatch({
+    await governance.dispatch({
       goalId: goal.id, goalTickId,
       actionType: 'send_follow_up',
       target: { goalId: goal.id },
       reasoning: 'Following up on this goal',
       perform: async () => { /* ...send the messages... */ },
     })
-    return { acted: governanceOutcome === 'taken', summary: 'Sent follow-up' }
+    // Whether the pass acted is derived from the governance ledger, not
+    // reported here — an executor can't misstate what it did.
+    return { summary: 'Sent follow-up' }
   },
 })
 ```

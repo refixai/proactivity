@@ -364,7 +364,7 @@ describe("E2E: plan/act heartbeat", () => {
       executor: async (ctx: ExecutorContext) => {
         const r = await ctx.governance.dispatch({
           goalId: ctx.goal.id,
-          goalTickId: "gt-auto",
+          goalTickId: ctx.goalTickId,
           actionType: "send_message",
           target: { userId: ctx.goal.id === "g-churn" ? "user-a" : "all-users" },
           reasoning: `Working goal: ${ctx.goal.title}`,
@@ -372,7 +372,6 @@ describe("E2E: plan/act heartbeat", () => {
         });
 
         return {
-          acted: r.governanceOutcome === "taken",
           summary: r.governanceOutcome === "taken" ? "Sent message" : `Denied: ${r.denialReason}`,
         };
       },
@@ -422,14 +421,14 @@ describe("E2E: plan/act heartbeat", () => {
       executor: async (ctx) => {
         const r = await ctx.governance.dispatch({
           goalId: ctx.goal.id,
-          goalTickId: "gt",
+          goalTickId: ctx.goalTickId,
           actionType: "action",
           target: { goal: ctx.goal.id },
           reasoning: "test",
           perform: async () => {},
         });
         outcomes.push(`${ctx.goal.id}:${r.governanceOutcome}`);
-        return { acted: r.governanceOutcome === "taken", summary: r.governanceOutcome };
+        return { summary: r.governanceOutcome };
       },
     });
 
