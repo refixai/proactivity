@@ -11,7 +11,7 @@ importers:
       '@anthropic-ai/sdk':
         specifier: 0.109.1
         version: 0.109.1
-      '@refixai/proactivity':
+      '@refix/proactivity':
         specifier: file:../..
         version: file:../..
     devDependencies:
@@ -196,7 +196,7 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@refixai/proactivity@file:../..':
+  '@refix/proactivity@file:../..':
     resolution: {directory: ../.., type: directory}
     engines: {node: '>=20'}
     peerDependencies:
@@ -337,7 +337,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@refixai/proactivity@file:../..': {}
+  '@refix/proactivity@file:../..': {}
 
   '@stablelib/base64@1.0.1': {}
 

@@ -17,7 +17,7 @@ importers:
       '@langchain/langgraph':
         specifier: 1.4.7
         version: 1.4.7(@langchain/core@1.2.1)(zod@4.4.3)
-      '@refixai/proactivity':
+      '@refix/proactivity':
         specifier: file:../..
         version: file:../..
       zod:
@@ -252,7 +252,7 @@ packages:
   '@langchain/protocol@0.0.18':
     resolution: {integrity: sha512-XW1egQtPfsGI41w2AMZNFZrUIwFSQHTjVMZs0OaTpCAvht/QLoaPN8FQcsysMVypOhupG28J29yOorrc70otBQ==}
 
-  '@refixai/proactivity@file:../..':
+  '@refix/proactivity@file:../..':
     resolution: {directory: ../.., type: directory}
     engines: {node: '>=20'}
     peerDependencies:
@@ -520,7 +520,7 @@ snapshots:
 
   '@langchain/protocol@0.0.18': {}
 
-  '@refixai/proactivity@file:../..': {}
+  '@refix/proactivity@file:../..': {}
 
   '@stablelib/base64@1.0.1': {}
 
