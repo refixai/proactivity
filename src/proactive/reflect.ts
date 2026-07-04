@@ -268,26 +268,24 @@ export const parseReflectOutput = (
     mutations.push(mutation);
   }
 
-  // Batch-level validation (status machine, duplicate targets, unknown goals).
-  // Drop mutations whose goalId a validation error names; re-validate the
-  // survivors so the applied batch is provably clean.
-  let accepted = mutations;
-  let errors = validateGoalMutations(accepted, opts.goals);
-  if (errors.length > 0) {
-    warnings.push(...errors.map((e) => `dropped by validator: ${e}`));
-    const badIds = new Set(
-      errors.flatMap((e) => [...e.matchAll(/goal (\S+)/g)].map((match) => match[1]!)),
-    );
-    accepted = accepted.filter(
-      (m) => !(m.goalId && badIds.has(m.goalId)) && !(m.op === "create" && !m.title),
-    );
-    errors = validateGoalMutations(accepted, opts.goals);
+  // Validate each mutation on its own (status machine, unknown/terminal
+  // goals) so one bad mutation drops alone instead of poisoning the batch,
+  // then validate the surviving batch once more for the cross-mutation rules
+  // (duplicate goal targets). If the batch is somehow still dirty, refuse it
+  // whole rather than apply a half-validated one.
+  let accepted: GoalMutation[] = [];
+  for (const mutation of mutations) {
+    const errors = validateGoalMutations([mutation], opts.goals);
     if (errors.length > 0) {
-      // Still dirty after surgery — refuse the whole batch rather than apply
-      // a half-validated one.
-      warnings.push(`goal mutation batch rejected entirely: ${errors.join("; ")}`);
-      accepted = [];
+      warnings.push(...errors.map((e) => `dropped by validator: ${e}`));
+      continue;
     }
+    accepted.push(mutation);
+  }
+  const batchErrors = validateGoalMutations(accepted, opts.goals);
+  if (batchErrors.length > 0) {
+    warnings.push(`goal mutation batch rejected entirely: ${batchErrors.join("; ")}`);
+    accepted = [];
   }
 
   return { ledgerEntry, goalMutations: accepted, nextWakeMinutes, nextWakeReasoning, warnings };
