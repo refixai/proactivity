@@ -1,13 +1,15 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { ProactivityStore } from "../core/types.js";
 import { createTestStore } from "../memory/index.js";
 import { parseDuration } from "./duration.js";
 import { governedPerform } from "./governed.js";
+import { consoleNarrator } from "./observe.js";
 import { proactive } from "./proactive.js";
 import { parseReflectOutput, renderTranscript } from "./reflect.js";
 import type {
   AgentRunInput,
   ProactiveAgentAdapter,
+  ProactiveEvent,
   ReasoningModel,
   Transcript,
 } from "./types.js";
@@ -80,6 +82,7 @@ describe("proactive() wake pipeline", () => {
     const handle = proactive(adapter, {
       model,
       store,
+      observe: false,
       goals: [
         {
           title: "Keep the user briefed",
@@ -124,7 +127,7 @@ describe("proactive() wake pipeline", () => {
       reflection(),
     );
 
-    const handle = proactive(adapter, { model, store });
+    const handle = proactive(adapter, { model, store, observe: false });
     await handle.wake("e1");
     await handle.wake("e1");
 
@@ -167,7 +170,7 @@ describe("proactive() wake pipeline", () => {
     });
 
     const { model } = makeModel(reflection({ ledgerEntry: "sent two briefs" }));
-    const handle = proactive(adapter, { model, store, caps: { perWake: 2 } });
+    const handle = proactive(adapter, { model, store, observe: false, caps: { perWake: 2 } });
     await handle.wake("e1");
 
     // The side effect ran exactly once per distinct target, up to the cap.
@@ -214,6 +217,7 @@ describe("proactive() wake pipeline", () => {
     const handle = proactive(adapter, {
       model,
       store,
+      observe: false,
       goals: [
         { id: "watch-signups", title: "Watch signups", objective: "o", doneCondition: "d", pinned: true },
       ],
@@ -249,7 +253,7 @@ describe("proactive() wake pipeline", () => {
       }),
     );
 
-    const handle = proactive(adapter, { model, store });
+    const handle = proactive(adapter, { model, store, observe: false });
     await handle.wake("e1");
 
     const goals = await activeGoals(store, "e1");
@@ -261,7 +265,7 @@ describe("proactive() wake pipeline", () => {
     const { adapter } = makeAdapter();
     const { model } = makeModel(new Error("provider 500"));
 
-    const handle = proactive(adapter, { model, store, cadence: { min: "10m", max: "2h" } });
+    const handle = proactive(adapter, { model, store, observe: false, cadence: { min: "10m", max: "2h" } });
     await handle.wake("e1");
 
     const tick = (await store.getLatestTick("e1"))!;
@@ -279,7 +283,7 @@ describe("proactive() wake pipeline", () => {
     });
     const { model, prompts } = makeModel(reflection());
 
-    const handle = proactive(adapter, { model, store });
+    const handle = proactive(adapter, { model, store, observe: false });
     await handle.wake("e1");
 
     const tick = (await store.getLatestTick("e1"))!;
@@ -297,6 +301,7 @@ describe("proactive() wake pipeline", () => {
     const handle = proactive(adapter, {
       model,
       store,
+      observe: false,
       cadence: { min: "5m", max: "1h", default: "10m" },
       gate: async () => false,
     });
@@ -330,7 +335,7 @@ describe("proactive() wake pipeline", () => {
     const { adapter } = makeAdapter();
     const { model } = makeModel(reflection({ nextWakeMinutes: 1 })); // below min
 
-    const handle = proactive(adapter, { model, store, cadence: { min: "15m", max: "24h" } });
+    const handle = proactive(adapter, { model, store, observe: false, cadence: { min: "15m", max: "24h" } });
     await handle.wake("e1");
 
     const tick = (await store.getLatestTick("e1"))!;
@@ -431,5 +436,144 @@ describe("parseDuration", () => {
   test("rejects garbage with the config key in the message", () => {
     expect(() => parseDuration("soon", "cadence.min")).toThrow(/cadence\.min/);
     expect(() => parseDuration(-5, "cadence.max")).toThrow(/cadence\.max/);
+  });
+});
+
+// --- Observability -----------------------------------------------------------
+
+describe("observe", () => {
+  test("a custom observer receives the whole wake as one ordered event stream", async () => {
+    const store = createTestStore();
+    const events: ProactiveEvent[] = [];
+    // The adapter streams its own activity through input.observe (what the
+    // framework adapters do live) and takes one governed action.
+    const { adapter } = makeAdapter(async (input) => {
+      input.observe?.({ type: "tool_call", name: "lookup", args: { q: "x" } });
+      await governedPerform({
+        actionType: "send_brief",
+        target: { userId: "u1" },
+        perform: async () => "sent",
+      });
+      return okTranscript();
+    });
+    const { model } = makeModel(reflection({ ledgerEntry: "sent the brief" }));
+
+    const handle = proactive(adapter, { model, store, observe: (e) => events.push(e) });
+    await handle.wake("e1");
+
+    expect(events.map((e) => e.type)).toEqual([
+      "wake_started",
+      "agent_event",
+      "governance",
+      "reflection",
+      "wake_completed",
+    ]);
+    const started = events[0] as Extract<ProactiveEvent, { type: "wake_started" }>;
+    expect(started.trigger).toBe("manual");
+    expect(started.tickNumber).toBe(1);
+    const agent = events[1] as Extract<ProactiveEvent, { type: "agent_event" }>;
+    expect(agent.event).toEqual({ type: "tool_call", name: "lookup", args: { q: "x" } });
+    const governance = events[2] as Extract<ProactiveEvent, { type: "governance" }>;
+    expect(governance.actionType).toBe("send_brief");
+    expect(governance.outcome).toBe("taken");
+    const reflected = events[3] as Extract<ProactiveEvent, { type: "reflection" }>;
+    expect(reflected.ledgerEntry).toBe("sent the brief");
+    const completed = events[4] as Extract<ProactiveEvent, { type: "wake_completed" }>;
+    expect(completed.acted).toBe(true);
+    expect(completed.nextWakeMs).toBe(30 * 60_000);
+  });
+
+  test("a gate-skipped wake emits wake_skipped and nothing else", async () => {
+    const events: ProactiveEvent[] = [];
+    const { adapter } = makeAdapter();
+    const { model } = makeModel(reflection());
+    const handle = proactive(adapter, {
+      model,
+      store: createTestStore(),
+      gate: () => false,
+      observe: (e) => events.push(e),
+    });
+    await handle.wake("e1");
+    expect(events.map((e) => e.type)).toEqual(["wake_skipped"]);
+  });
+
+  test("narration is on by default and observe: false silences it", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { adapter } = makeAdapter();
+      const { model } = makeModel(reflection());
+
+      const loud = proactive(adapter, { model, store: createTestStore() });
+      await loud.wake("e1");
+      const loudLines = log.mock.calls.map((c) => String(c[0]));
+      expect(loudLines.some((l) => l.includes("[proactive:e1] wake #1"))).toBe(true);
+
+      log.mockClear();
+      const quiet = proactive(adapter, { model, store: createTestStore(), observe: false });
+      await quiet.wake("e1");
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("a throwing observer never breaks the wake", async () => {
+    const store = createTestStore();
+    const { adapter } = makeAdapter();
+    const { model } = makeModel(reflection());
+    const handle = proactive(adapter, {
+      model,
+      store,
+      observe: () => {
+        throw new Error("observer bug");
+      },
+    });
+    await handle.wake("e1");
+    expect((await store.getLatestTick("e1"))!.status).toBe("completed");
+  });
+
+  test("consoleNarrator renders the compact one-liners", () => {
+    const lines: string[] = [];
+    const narrate = consoleNarrator((line) => lines.push(line));
+    narrate({
+      type: "wake_started",
+      entityId: "e1",
+      tickNumber: 3,
+      trigger: "scheduled",
+      goalCount: 2,
+      lastWakeAt: new Date(Date.now() - 120_000),
+    });
+    narrate({
+      type: "agent_event",
+      entityId: "e1",
+      event: { type: "tool_call", name: "LINEAR_LIST_ISSUES", args: { assignee: "me" } },
+    });
+    // Model text is deliberately not narrated.
+    narrate({ type: "agent_event", entityId: "e1", event: { type: "model", content: "hmm" } });
+    narrate({
+      type: "governance",
+      entityId: "e1",
+      actionType: "send_brief",
+      outcome: "hard_denied",
+      denialReason: "duplicate of attempt a1",
+    });
+    narrate({
+      type: "reflection",
+      entityId: "e1",
+      ledgerEntry: "briefed 2 changed tickets",
+      goalMutationCount: 1,
+      nextWakeMinutes: 1.5,
+      nextWakeReasoning: "activity is fresh",
+      warnings: [],
+    });
+    narrate({ type: "wake_failed", entityId: "e1", error: new Error("boom") });
+
+    expect(lines).toEqual([
+      "[proactive:e1] wake #3 (scheduled) — 2 goals, last wake 2m ago",
+      '[proactive:e1] ⚙ LINEAR_LIST_ISSUES {"assignee":"me"}',
+      "[proactive:e1] ⛔ send_brief — hard_denied: duplicate of attempt a1",
+      "[proactive:e1] ✎ briefed 2 changed tickets [1 goal mutation(s)] — next wake in 90s (activity is fresh)",
+      "[proactive:e1] ✗ wake failed: boom",
+    ]);
   });
 });

@@ -75,6 +75,20 @@ const sendBrief = governed(mySendBriefTool, { target: (args) => ({ userId: args.
 // model in-band: "Action blocked by governance (hard_denied): Duplicate…"
 ```
 
+The loop narrates itself — no logging code to write. Wake starts, each tool
+call (streamed live by the adapters), governance outcomes, and reflection's
+verdict print as compact console lines by default:
+
+```
+[proactive:user-123] wake #3 (scheduled) — 1 goal, last wake 2m ago
+[proactive:user-123] ⚙ LINEAR_LIST_ISSUES {"assignee":"me"}
+[proactive:user-123] ✔ send_brief — taken
+[proactive:user-123] ✎ briefed 2 changed tickets — next wake in 90s (activity is fresh)
+```
+
+Route the same event stream into your own logger with `observe: (event) => …`,
+or pass `observe: false` to silence it.
+
 Adapters: **LangGraph** (`@refix/proactivity/langgraph` — works on any compiled graph, subgraphs traced via callbacks), **Anthropic SDK** (`@refix/proactivity/anthropic` — `anthropicLoop()` if we own the loop, `fromAnthropic()` with a traced client if you keep yours), **Eve** (`@refix/proactivity/eve` — eve-native: hooks + a due-gate over Eve's cron + a terminal `finish_heartbeat` tool). OpenClaw and Hermes ship as plugins (below).
 
 `proactive()` is compiled from the primitives documented in the rest of this README — same store, same ledger, same scheduler. When the wrapper stops fitting your flow, ejecting one layer down is not a migration.

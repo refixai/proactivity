@@ -74,6 +74,14 @@ export const governedPerform = async <T>(
     dispatch.governanceOutcome === "taken" ||
     dispatch.governanceOutcome === "soft_cap_overridden";
 
+  scope.observe?.({
+    type: "governance",
+    entityId: scope.entityId,
+    actionType: request.actionType,
+    outcome: dispatch.governanceOutcome,
+    ...(dispatch.denialReason ? { denialReason: dispatch.denialReason } : {}),
+  });
+
   return {
     governed: true,
     outcome: dispatch.governanceOutcome,

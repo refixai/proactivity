@@ -172,6 +172,20 @@ how much reaches their agent. Omit the callback and the rendered situation
 report arrives as the user message (stateful by default). Provide `input` and
 you control exactly what flows in, down to ignoring all of it (stateless).
 
+### Observability is the SDK's job, loud by default
+
+The wrapper already sees everything — it records the transcript, dispatches
+governance, runs reflection — so making the developer hand-roll callbacks just
+to watch their own loop would be selling the observation machinery twice.
+`observe` on the config takes the whole story as one flat event stream
+(`wake_started → agent_event* → governance* → reflection → wake_completed`,
+plus `wake_skipped`/`wake_failed`), with agent events forwarded live by the
+adapters as they record. The default is a compact console narrator: a
+background agent's worst failure mode is silence, so the out-of-box experience
+is watching the loop breathe. Pass a function to route into a real logger,
+`false` to silence. Observers are telemetry — one that throws is swallowed,
+never allowed to fail a wake.
+
 ### Sensing belongs to the agent; the wake gate is the only pre-model code
 
 No briefing sources in the happy path. The agent senses with its own read

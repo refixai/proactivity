@@ -7,6 +7,7 @@ export {
 } from "./governed.js";
 export { runInTickScope, currentTickScope, type TickScope } from "./tickScope.js";
 export { parseDuration, type Duration } from "./duration.js";
+export { consoleNarrator } from "./observe.js";
 export {
   buildReflectPrompt,
   parseReflectOutput,
@@ -23,6 +24,7 @@ export type {
   LedgerWake,
   ProactiveAgentAdapter,
   ProactiveConfig,
+  ProactiveEvent,
   ProactiveHandle,
   ReasoningModel,
   ReflectPromptContext,

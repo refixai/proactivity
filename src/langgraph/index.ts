@@ -81,8 +81,17 @@ const outputToText = (output: unknown): string => {
   return String(output ?? "");
 };
 
-export const createTranscriptRecorder = (): TranscriptRecorder => {
+export const createTranscriptRecorder = (
+  // Live feed: called the moment each event is recorded (tool results are
+  // filled in on the same object later). proactive() wires the wake's
+  // observer here so the console narrates during the run.
+  onEvent?: (event: TranscriptEvent) => void,
+): TranscriptRecorder => {
   const events: TranscriptEvent[] = [];
+  const push = (event: TranscriptEvent): void => {
+    events.push(event);
+    onEvent?.(event);
+  };
   // Tool events are opened at start (preserving call order) and completed at
   // end/error via the runId — starts and ends interleave across parallel calls.
   const openToolRuns = new Map<string, Extract<TranscriptEvent, { type: "tool_call" }>>();
@@ -92,7 +101,7 @@ export const createTranscriptRecorder = (): TranscriptRecorder => {
       handleLLMEnd(output, _runId) {
         const generation = output.generations?.[0]?.[0];
         const text = generation?.text || contentToText(generation?.message?.content);
-        if (text) events.push({ type: "model", content: text });
+        if (text) push({ type: "model", content: text });
       },
       handleToolStart(toolInfo, input, runId, _parentRunId, _tags, _metadata, runName) {
         let args: unknown = input;
@@ -106,7 +115,7 @@ export const createTranscriptRecorder = (): TranscriptRecorder => {
           name: runName ?? toolInfo.name ?? toolInfo.id?.[toolInfo.id.length - 1] ?? "tool",
           args,
         };
-        events.push(event);
+        push(event);
         openToolRuns.set(runId, event);
       },
       handleToolEnd(output, runId) {
@@ -159,7 +168,7 @@ export const fromLangGraph = (
 ): ProactiveAgentAdapter => ({
   name: "langgraph",
   async run(input) {
-    const recorder = createTranscriptRecorder();
+    const recorder = createTranscriptRecorder(input.observe);
     const graphInput =
       input.custom ??
       (options.defaultInput

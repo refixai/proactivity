@@ -36,6 +36,51 @@ export type Transcript = {
   finalOutput: string | null;
 };
 
+// --- Observability: the loop narrates itself ---
+
+// Everything the wrapper does is emitted as one flat event stream: wake
+// lifecycle from the runtime, agent activity live from the adapters as they
+// record it, governance outcomes from the envelope, and reflection's verdict.
+// The default observer prints a compact console narration (a background agent
+// whose failure mode is silence must be loud by default); pass your own
+// function to route into a real logger, or `observe: false` to silence.
+export type ProactiveEvent =
+  | {
+      type: "wake_started";
+      entityId: string;
+      tickNumber: number;
+      trigger: TickTrigger;
+      goalCount: number;
+      lastWakeAt: Date | null;
+    }
+  | { type: "wake_skipped"; entityId: string; reason: string }
+  // One agent action, forwarded live while the agent is still running.
+  | { type: "agent_event"; entityId: string; event: TranscriptEvent }
+  | {
+      type: "governance";
+      entityId: string;
+      actionType: string;
+      outcome: GovernanceOutcome;
+      denialReason?: string;
+    }
+  | {
+      type: "reflection";
+      entityId: string;
+      ledgerEntry: string;
+      goalMutationCount: number;
+      nextWakeMinutes: number;
+      nextWakeReasoning: string;
+      warnings: string[];
+    }
+  | {
+      type: "wake_completed";
+      entityId: string;
+      tickNumber: number;
+      acted: boolean;
+      nextWakeMs: number;
+    }
+  | { type: "wake_failed"; entityId: string; error: unknown };
+
 // --- ReasoningModel: the developer's own LLM, behind a tiny interface ---
 
 // Core has zero runtime dependencies, so it cannot hold a provider SDK or a
@@ -100,6 +145,11 @@ export type AgentRunInput<TCustom = unknown> = {
   // The `input` callback's output, when configured — adapter-specific shape
   // (a LangGraph state object, an Anthropic message list, …).
   custom?: TCustom;
+  // Live transcript feed: adapters call this as they record each event, so
+  // the observer narrates DURING the run, not after it. Optional — an adapter
+  // that can't stream (Eve's self-report) simply never calls it, and the
+  // returned Transcript remains the source of truth for reflection.
+  observe?: (event: TranscriptEvent) => void;
 };
 
 // Deliberately small — three concerns, nothing else — which is what makes
@@ -172,6 +222,10 @@ export type ProactiveConfig<TCustom = unknown> = {
   input?: (ctx: WakeContext) => TCustom;
   // How many past wakes the situation report includes. Default 5.
   ledgerWindow?: number;
+  // Live narration of the loop. Omit for the built-in console narrator; pass
+  // a function to route events into your own logger; `false` to silence. An
+  // observer that throws is swallowed — it can never break a wake.
+  observe?: ((event: ProactiveEvent) => void) | false;
   // Infra errors from background scheduled wakes (the tick itself records its
   // own failures via the store). Defaults to console.error.
   onError?: (error: unknown, entityId: string) => void;

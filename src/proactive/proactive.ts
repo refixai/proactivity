@@ -24,6 +24,7 @@ import type {
 import { createTestStore } from "../memory/index.js";
 import { createTimerAdapter } from "../timer/index.js";
 import { parseDuration } from "./duration.js";
+import { consoleNarrator } from "./observe.js";
 import { runReflection } from "./reflect.js";
 import { loadLedger, renderReport } from "./report.js";
 import { ensureSeededGoals, normalizeGoalSeeds, pickPrimaryGoal } from "./seeds.js";
@@ -31,6 +32,7 @@ import { runInTickScope } from "./tickScope.js";
 import type {
   ProactiveAgentAdapter,
   ProactiveConfig,
+  ProactiveEvent,
   ProactiveHandle,
   Transcript,
   WakeContext,
@@ -50,6 +52,18 @@ export const proactive = <TCustom = unknown>(
         "or langchainModel(chatModel) from @refix/proactivity/langgraph). It powers reflection.",
     );
   }
+
+  // Observability: console narration by default, custom fn, or false. An
+  // observer is telemetry — if it throws, the wake must not care.
+  const observer = config.observe === false ? null : (config.observe ?? consoleNarrator());
+  const emit = (event: ProactiveEvent): void => {
+    if (!observer) return;
+    try {
+      observer(event);
+    } catch {
+      // never let narration break the loop
+    }
+  };
 
   const store: ProactivityStore = config.store ?? createTestStore();
   const cadence: CadenceConfig = (() => {
@@ -86,6 +100,11 @@ export const proactive = <TCustom = unknown>(
           goals,
         });
         if (!due) {
+          emit({
+            type: "wake_skipped",
+            entityId: boundary.entityId,
+            reason: "wake gate declined — the model was not woken",
+          });
           return {
             cadenceHint: {
               nextTickMs: cadence.default,
@@ -126,6 +145,15 @@ export const proactive = <TCustom = unknown>(
       const report = renderReport(contextBase);
       const context: WakeContext = { ...contextBase, report };
 
+      emit({
+        type: "wake_started",
+        entityId: boundary.entityId,
+        tickNumber: boundary.tickNumber,
+        trigger: contextBase.trigger,
+        goalCount: goals.length,
+        lastWakeAt: boundary.previousTickStartedAt,
+      });
+
       // --- RUN: the unchanged agent, inside the tick scope ---
       // An agent crash fails the wake honestly (the heartbeat records the
       // failed tick); governed actions dispatched before the crash are real
@@ -137,11 +165,13 @@ export const proactive = <TCustom = unknown>(
           goalId: primary.id,
           goalTickId,
           governance,
+          observe: emit,
         },
         () =>
           adapter.run({
             context,
             message: report,
+            observe: (event) => emit({ type: "agent_event", entityId: boundary.entityId, event }),
             ...(config.input ? { custom: config.input(context) } : {}),
           }),
       );
@@ -160,6 +190,16 @@ export const proactive = <TCustom = unknown>(
         promptOverride: config.prompts?.reflect,
       });
 
+      emit({
+        type: "reflection",
+        entityId: boundary.entityId,
+        ledgerEntry: reflection.ledgerEntry,
+        goalMutationCount: reflection.goalMutations.length,
+        nextWakeMinutes: reflection.nextWakeMinutes,
+        nextWakeReasoning: reflection.nextWakeReasoning,
+        warnings: reflection.warnings,
+      });
+
       if (reflection.goalMutations.length > 0) {
         await store.applyGoalMutations(boundary.tickId, reflection.goalMutations);
       }
@@ -176,9 +216,18 @@ export const proactive = <TCustom = unknown>(
           : reflection.ledgerEntry;
       await store.updateGoalTick(goalTickId, { acted, summary });
 
+      const nextTickMs = Math.round(reflection.nextWakeMinutes * 60_000);
+      emit({
+        type: "wake_completed",
+        entityId: boundary.entityId,
+        tickNumber: boundary.tickNumber,
+        acted,
+        nextWakeMs: nextTickMs,
+      });
+
       return {
         cadenceHint: {
-          nextTickMs: Math.round(reflection.nextWakeMinutes * 60_000),
+          nextTickMs,
           reasoning: reflection.nextWakeReasoning,
         },
       };
@@ -194,6 +243,10 @@ export const proactive = <TCustom = unknown>(
       lastTrigger.set(entityId, trigger);
       try {
         return await heartbeat.runTick(entityId, trigger);
+      } catch (error) {
+        // The heartbeat already recorded the failed tick; this is narration.
+        emit({ type: "wake_failed", entityId, error });
+        throw error;
       } finally {
         lastTrigger.delete(entityId);
       }

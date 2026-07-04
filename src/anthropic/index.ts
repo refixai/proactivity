@@ -134,6 +134,10 @@ export const anthropicLoop = (options: AnthropicLoopOptions): ProactiveAgentAdap
     const { client, model, system, tools = [] } = options;
     const maxTurns = options.maxTurns ?? 12;
     const events: TranscriptEvent[] = [];
+    const push = (event: TranscriptEvent): void => {
+      events.push(event);
+      input.observe?.(event);
+    };
     let finalOutput: string | null = null;
 
     const toolDefs = tools.map(({ name, description, input_schema }) => ({
@@ -158,7 +162,7 @@ export const anthropicLoop = (options: AnthropicLoopOptions): ProactiveAgentAdap
 
       for (const block of response.content) {
         if (block.type === "text" && block.text) {
-          events.push({ type: "model", content: block.text });
+          push({ type: "model", content: block.text });
           finalOutput = block.text;
         }
       }
@@ -169,7 +173,7 @@ export const anthropicLoop = (options: AnthropicLoopOptions): ProactiveAgentAdap
       for (const block of response.content) {
         if (block.type !== "tool_use") continue;
         const { resultText, isError } = await executeLoopTool(tools, block);
-        events.push({
+        push({
           type: "tool_call",
           name: block.name ?? "tool",
           args: block.input,
@@ -188,7 +192,7 @@ export const anthropicLoop = (options: AnthropicLoopOptions): ProactiveAgentAdap
 
     if (turn === maxTurns) {
       // Not silent: reflection should know the run was cut, not concluded.
-      events.push({
+      push({
         type: "model",
         content: `[runtime] agent loop halted at maxTurns=${maxTurns} before a natural stop`,
       });
@@ -252,7 +256,7 @@ export const fromAnthropic = <TCustom = unknown>(
 ): ProactiveAgentAdapter<TCustom> => ({
   name: "anthropic",
   async run(input) {
-    const recorder = createMessagesRecorder();
+    const recorder = createMessagesRecorder(input.observe);
     const traced = traceClient(options.client, recorder.record);
 
     await options.run({
@@ -299,8 +303,16 @@ const traceClient = (
 // objects per call degrade to duplicate events (visible in the transcript,
 // never silently dropped); parallel side-threads are each recorded as their
 // pairs arrive.
-const createMessagesRecorder = () => {
+const createMessagesRecorder = (
+  // Live feed: fires as each request/response pair is processed — near-live
+  // (one model turn behind at most), which is as close as a stateless API gets.
+  onEvent?: (event: TranscriptEvent) => void,
+) => {
   const events: TranscriptEvent[] = [];
+  const push = (event: TranscriptEvent): void => {
+    events.push(event);
+    onEvent?.(event);
+  };
   const seenMessages = new WeakSet<object>();
   const seenContent = new WeakSet<object>();
   const openToolUses = new Map<string, Extract<TranscriptEvent, { type: "tool_call" }>>();
@@ -309,7 +321,7 @@ const createMessagesRecorder = () => {
   const processAssistantBlocks = (blocks: ContentBlockLike[]) => {
     for (const block of blocks) {
       if (block.type === "text" && block.text) {
-        events.push({ type: "model", content: block.text });
+        push({ type: "model", content: block.text });
         finalOutput = block.text;
       } else if (block.type === "tool_use") {
         const event: Extract<TranscriptEvent, { type: "tool_call" }> = {
@@ -317,7 +329,7 @@ const createMessagesRecorder = () => {
           name: block.name ?? "tool",
           args: block.input,
         };
-        events.push(event);
+        push(event);
         if (block.id) openToolUses.set(block.id, event);
       }
     }

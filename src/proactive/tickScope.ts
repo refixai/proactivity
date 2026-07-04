@@ -14,6 +14,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { GovernanceHandle } from "../core/types.js";
+import type { ProactiveEvent } from "./types.js";
 
 export type TickScope = {
   entityId: string;
@@ -23,6 +24,10 @@ export type TickScope = {
   goalId: string;
   goalTickId: string;
   governance: GovernanceHandle;
+  // The wake's observer, so scope-aware helpers (governedPerform) can narrate
+  // without the adapter's involvement. Optional: rebuilt scopes (Eve) and
+  // hand-rolled primitive setups may not carry one.
+  observe?: (event: ProactiveEvent) => void;
 };
 
 const storage = new AsyncLocalStorage<TickScope>();
