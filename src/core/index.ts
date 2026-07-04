@@ -1,7 +1,15 @@
 export { createTestStore } from "../memory/index.js";
+// The same in-memory store under the name the wrapper docs use — it's a real
+// store, just not a durable one; "test" undersells it for local dev.
+export { createTestStore as memoryStore } from "../memory/index.js";
 export { createScheduler, type Scheduler } from "./scheduler.js";
 export { assembleBriefing } from "./briefing.js";
 export { createHeartbeat, createPlanActHeartbeat, type Heartbeat } from "./heartbeat.js";
+
+// The wrapper layer — the default door. proactive() runs an UNCHANGED agent
+// on the full loop (inject → run → reflect → schedule); the primitives below
+// stay public as the power-user door and are what the wrapper is built from.
+export * from "../proactive/index.js";
 
 // Governance as a standalone primitive — so a consumer driving its own loop
 // (e.g. the OpenClaw plugin) can wrap outbound actions in the same envelope the
@@ -55,6 +63,7 @@ export type {
   InsertTickResult,
   TickPatch,
   InsertGoalTick,
+  GoalTickRecord,
   InsertAttempt,
   InsertAttemptResult,
 } from "./types.js";
