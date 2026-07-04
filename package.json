@@ -49,8 +49,8 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "pg": ">=8.0.0",
-    "bullmq": ">=5.0.0"
+    "bullmq": ">=5.0.0",
+    "pg": ">=8.0.0"
   },
   "peerDependenciesMeta": {
     "pg": {
@@ -61,11 +61,15 @@
     }
   },
   "devDependencies": {
+    "@langchain/core": "^1.2.1",
+    "@langchain/langgraph": "^1.4.7",
+    "@types/node": "^24",
+    "@types/pg": "^8.11.0",
+    "bullmq": "^5.52.0",
+    "pg": "^8.14.0",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0",
-    "@types/pg": "^8.11.0",
-    "pg": "^8.14.0",
-    "bullmq": "^5.52.0"
+    "zod": "^4.4.3"
   },
   "engines": {
     "node": ">=20"
