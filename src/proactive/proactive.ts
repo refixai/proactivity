@@ -17,7 +17,6 @@ import { createHeartbeat } from "../core/heartbeat.js";
 import { createScheduler } from "../core/scheduler.js";
 import type {
   CadenceConfig,
-  GoalRecord,
   GovernanceCaps,
   ProactivityStore,
   TickTrigger,
@@ -27,9 +26,9 @@ import { createTimerAdapter } from "../timer/index.js";
 import { parseDuration } from "./duration.js";
 import { runReflection } from "./reflect.js";
 import { loadLedger, renderReport } from "./report.js";
+import { ensureSeededGoals, normalizeGoalSeeds, pickPrimaryGoal } from "./seeds.js";
 import { runInTickScope } from "./tickScope.js";
 import type {
-  GoalSeed,
   ProactiveAgentAdapter,
   ProactiveConfig,
   ProactiveHandle,
@@ -39,32 +38,6 @@ import type {
 
 const DEFAULT_LEDGER_WINDOW = 5;
 const DEFAULT_CAPS_PER_WAKE = 10;
-
-// When the developer declares no goals, the loop still needs a standing goal —
-// governed actions attribute to it and its scratchpad becomes the agent's
-// memory. Pinned so reflection can evolve it but never close it.
-const FALLBACK_GOAL: Required<Omit<GoalSeed, "priority">> & { priority: "medium" } = {
-  id: "proactive-loop",
-  title: "Run the proactive loop",
-  objective: "Wake on cadence, review the situation, and act when something genuinely warrants it.",
-  doneCondition: "Standing goal — never done.",
-  priority: "medium",
-  pinned: true,
-};
-
-const slugify = (title: string): string =>
-  title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64) || "goal";
-
-const PRIORITY_RANK: Record<GoalRecord["priority"], number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-};
 
 export const proactive = <TCustom = unknown>(
   adapter: ProactiveAgentAdapter<TCustom>,
@@ -91,12 +64,7 @@ export const proactive = <TCustom = unknown>(
   // One goal-tick per wake, so the per-pass and per-tick ceilings coincide.
   const caps: GovernanceCaps = { perPass: perWake, perTick: perWake };
 
-  // Stable ids make seeding idempotent across restarts and across stores.
-  const seeds = (config.goals?.length ? config.goals : [FALLBACK_GOAL]).map((seed) => ({
-    ...seed,
-    id: seed.id ?? slugify(seed.title),
-  }));
-  const pinnedGoalIds = seeds.filter((s) => s.pinned).map((s) => s.id);
+  const { seeds, pinnedGoalIds } = normalizeGoalSeeds(config.goals);
   const ledgerWindow = config.ledgerWindow ?? DEFAULT_LEDGER_WINDOW;
 
   // The heartbeat callback doesn't receive the trigger (it's a tick-row
@@ -128,33 +96,10 @@ export const proactive = <TCustom = unknown>(
       }
 
       // --- Ensure declared goals exist (idempotent on stable ids) ---
-      const missing = [];
-      for (const seed of seeds) {
-        if (!(await store.getGoal(seed.id))) missing.push(seed);
-      }
-      if (missing.length > 0) {
-        await store.applyGoalMutations(
-          boundary.tickId,
-          missing.map((seed) => ({
-            op: "create" as const,
-            goalId: seed.id,
-            title: seed.title,
-            objective: seed.objective,
-            doneCondition: seed.doneCondition,
-            priority: seed.priority,
-            reasoning: "Declared in proactive() config",
-          })),
-        );
-        goals = await store.listGoals(boundary.entityId, { status: ["active", "paused"] });
-      }
+      goals = await ensureSeededGoals(store, boundary.tickId, boundary.entityId, seeds);
 
       // --- Primary goal: where this wake's governed actions attribute ---
-      const active = goals.filter((g) => g.status === "active");
-      const primary = [...(active.length ? active : goals)].sort(
-        (a, b) =>
-          PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
-          a.createdAt.getTime() - b.createdAt.getTime(),
-      )[0];
+      const primary = pickPrimaryGoal(goals);
       if (!primary) {
         // Unreachable by construction (seeds guarantee at least one goal), but
         // fail loudly rather than dispatch actions attributed to nothing.
