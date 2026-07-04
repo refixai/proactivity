@@ -40,6 +40,45 @@ And the moment an agent runs on its own, it needs guardrails, or you rebuild the
 
 This gives you both: the loop that makes an agent proactive, and the envelope that keeps it from spamming, repeating itself, or running away.
 
+## Quick start: `proactive()` — wrap the agent you already have
+
+Your agent does not change. `proactive()` wakes it on a self-adjusting cadence, briefs it with what it did last time, records what it does, and stops it from overdoing it:
+
+```ts
+import { proactive, memoryStore } from "@refix/proactivity";
+import { fromLangGraph, governed, langchainModel } from "@refix/proactivity/langgraph";
+
+// agent = the createReactAgent / StateGraph you already have. Unchanged.
+const handle = proactive(fromLangGraph(agent), {
+  model: langchainModel(llm),          // your own LLM — powers reflection
+  goals: [{ title: "Keep me briefed on Linear", objective: "Brief on change; silence otherwise.", doneCondition: "Standing", pinned: true }],
+  cadence: { min: "15m", max: "24h" },
+  store: memoryStore(),                // createPostgresStore(...) in prod
+});
+
+await handle.start("user-123");        // first wake in 15m — that's it
+await handle.wake("user-123");         // or wake it NOW (webhooks enter here)
+```
+
+Every wake runs four moments:
+
+1. **Inject** — a situation report built from the store (goals + their scratchpads, recent wakes, actions already taken) arrives as the agent's message. Shape it or replace it with the `input` callback — statefulness is your dial.
+2. **Run** — your unchanged agent executes. Tools you wrapped with `governed()` pass through the governance envelope (idempotency claimed *before* the side effect, caps, audit row); everything else runs untouched. Outside a wake, governed tools are transparent passthroughs.
+3. **Reflect** — one structured-output call on *your* model reads the full transcript and writes the ledger entry, evolves each goal's scratchpad, and picks the next wake time. Always on; a failed reflection degrades to safe defaults instead of failing the wake.
+4. **Schedule** — the scheduler re-arms at the reflected cadence.
+
+Govern only the tools that scare you:
+
+```ts
+const sendBrief = governed(mySendBriefTool, { target: (args) => ({ userId: args.userId }) });
+// same tick + same target → one delivery. The duplicate comes back to the
+// model in-band: "Action blocked by governance (hard_denied): Duplicate…"
+```
+
+Adapters: **LangGraph** (`@refix/proactivity/langgraph` — works on any compiled graph, subgraphs traced via callbacks), **Anthropic SDK** (`@refix/proactivity/anthropic` — `anthropicLoop()` if we own the loop, `fromAnthropic()` with a traced client if you keep yours), **Eve** (`@refix/proactivity/eve` — eve-native: hooks + a due-gate over Eve's cron + a terminal `finish_heartbeat` tool). OpenClaw and Hermes ship as plugins (below).
+
+`proactive()` is compiled from the primitives documented in the rest of this README — same store, same ledger, same scheduler. When the wrapper stops fitting your flow, ejecting one layer down is not a migration.
+
 ## How the loop runs
 
 An agent built on this SDK runs itself. You wire it up once, call `scheduler.start(entityId)`, and from then on it wakes on its own schedule, decides what to do, acts, and chooses when to wake next. Four pieces make that work:

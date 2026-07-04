@@ -20,6 +20,18 @@
       "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.js"
     },
+    "./langgraph": {
+      "types": "./dist/langgraph/index.d.ts",
+      "import": "./dist/langgraph/index.js"
+    },
+    "./anthropic": {
+      "types": "./dist/anthropic/index.d.ts",
+      "import": "./dist/anthropic/index.js"
+    },
+    "./eve": {
+      "types": "./dist/eve/index.d.ts",
+      "import": "./dist/eve/index.js"
+    },
     "./postgres": {
       "types": "./dist/postgres/index.d.ts",
       "import": "./dist/postgres/index.js"
@@ -49,14 +61,22 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
+    "@langchain/core": ">=1.0.0",
     "bullmq": ">=5.0.0",
-    "pg": ">=8.0.0"
+    "pg": ">=8.0.0",
+    "zod": ">=3.23.0"
   },
   "peerDependenciesMeta": {
     "pg": {
       "optional": true
     },
     "bullmq": {
+      "optional": true
+    },
+    "@langchain/core": {
+      "optional": true
+    },
+    "zod": {
       "optional": true
     }
   },
