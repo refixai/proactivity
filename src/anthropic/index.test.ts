@@ -1,8 +1,17 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, test } from "vitest";
 import { createTestStore } from "../memory/index.js";
 import { proactive } from "../proactive/proactive.js";
 import type { ReasoningModel } from "../proactive/types.js";
-import { anthropicLoop, anthropicModel, fromAnthropic } from "./index.js";
+import { anthropicLoop, anthropicModel, fromAnthropic, type AnthropicClientLike } from "./index.js";
+
+// Type-level regression guard: the GENUINE Anthropic client must be assignable
+// to our structural slice, or every real fromAnthropic()/anthropicModel() call
+// site fails to compile. (Caught in the wild: a Record<string, unknown> param
+// on create() rejects the SDK's strict MessageCreateParams overloads under
+// strictFunctionTypes.) Never called — it exists for tsc, not vitest.
+const _realClientIsAssignable = (real: Anthropic): AnthropicClientLike => real;
+void _realClientIsAssignable;
 
 // --- Stub client -------------------------------------------------------------
 // Plays back scripted Messages API responses (the last one repeats) and

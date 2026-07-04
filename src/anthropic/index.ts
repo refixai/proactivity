@@ -36,7 +36,14 @@ import type {
 
 export type AnthropicClientLike = {
   messages: {
-    create(params: Record<string, unknown>): Promise<unknown>;
+    // `params: any` on purpose. The real SDK's create() takes a strict
+    // MessageCreateParams union, which under strictFunctionTypes is not
+    // assignable to any narrower structural param type — a Record<string,
+    // unknown> param here would reject the genuine Anthropic client at the
+    // fromAnthropic()/anthropicModel() call site. The contract we actually
+    // rely on is what create() RETURNS, so the param stays open.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    create(params: any): Promise<unknown>;
   };
 };
 
