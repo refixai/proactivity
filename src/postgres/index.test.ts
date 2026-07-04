@@ -5,6 +5,22 @@ import type { GoalMutation, InsertAttempt } from "../core/types.js";
 
 const CONNECTION_STRING = "postgresql://refix:refix-password@localhost:5432/proactivity_test";
 
+// Integration suite: needs a local Postgres. Probe once at collection time and
+// skip cleanly when it's absent — a missing database must read as "skipped",
+// not as a failing file that turns the whole suite red.
+const pgAvailable = await (async () => {
+  const probe = new pg.Pool({ connectionString: CONNECTION_STRING, connectionTimeoutMillis: 1500 });
+  try {
+    await probe.query("SELECT 1");
+    return true;
+  } catch {
+    console.warn("[postgres/index.test] no local Postgres at localhost:5432 — skipping integration suite");
+    return false;
+  } finally {
+    await probe.end().catch(() => {});
+  }
+})();
+
 const pool = new pg.Pool({ connectionString: CONNECTION_STRING });
 
 const makeStore = () => createPostgresStore({ pool });
@@ -18,11 +34,13 @@ const seedGoalAndGoalTick = async (store: ReturnType<typeof makeStore>, entityId
 };
 
 beforeAll(async () => {
+  if (!pgAvailable) return;
   const store = makeStore();
   await store.migrate();
 });
 
 beforeEach(async () => {
+  if (!pgAvailable) return;
   // Clean tables in dependency order
   await pool.query("DELETE FROM proactivity_attempts");
   await pool.query("DELETE FROM proactivity_goal_ticks");
@@ -35,7 +53,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe("createPostgresStore", () => {
+describe.skipIf(!pgAvailable)("createPostgresStore", () => {
   test("end() leaves a caller-owned pool open but closes an SDK-created one", async () => {
     // Borrowed pool: end() must be a no-op so the caller's pool keeps working.
     await createPostgresStore({ pool }).end();
