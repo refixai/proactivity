@@ -119,6 +119,15 @@ export type InsertGoalTick = {
   orderIndex: number;
 };
 
+export type GoalTickRecord = {
+  id: string;
+  goalId: string;
+  tickId: string;
+  orderIndex: number;
+  acted: boolean;
+  summary: string;
+};
+
 // --- Governance ---
 
 export type GovernanceOutcome =
@@ -237,6 +246,12 @@ export type ProactivityStore = {
     entityId: string,
     currentTickNumber: number,
   ): Promise<Date | null>;
+  // Ledger reads: how past wakes are rendered back into context (the situation
+  // report) — most recent first. Additive to the original interface.
+  listRecentTicks(
+    entityId: string,
+    opts: { limit: number },
+  ): Promise<TickRecord[]>;
 
   listGoals(
     entityId: string,
@@ -252,6 +267,7 @@ export type ProactivityStore = {
     goalTickId: string,
     patch: { acted: boolean; summary: string },
   ): Promise<void>;
+  listGoalTicks(tickId: string): Promise<GoalTickRecord[]>;
 
   insertAttempt(attempt: InsertAttempt): Promise<InsertAttemptResult>;
   markAttemptCompleted(

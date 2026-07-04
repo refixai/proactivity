@@ -3,6 +3,7 @@ import type {
   EntityState,
   GoalMutation,
   GoalRecord,
+  GoalTickRecord,
   InsertAttempt,
   InsertAttemptResult,
   InsertGoalTick,
@@ -19,7 +20,7 @@ export const createTestStore = (): ProactivityStore => {
   const entities = new Map<string, EntityState>();
   const ticks = new Map<string, TickRecord>();
   const goals = new Map<string, GoalRecord>();
-  const goalTicks = new Map<string, { goalId: string; tickId: string; orderIndex: number; acted: boolean; summary: string }>();
+  const goalTicks = new Map<string, Omit<GoalTickRecord, "id">>();
   const attempts = new Map<string, ActionAttempt>();
   const idempotencyIndex = new Map<string, string>();
 
@@ -97,6 +98,13 @@ export const createTestStore = (): ProactivityStore => {
         }
       }
       return prev?.startedAt ?? null;
+    },
+
+    async listRecentTicks(entityId, opts) {
+      return [...ticks.values()]
+        .filter((t) => t.entityId === entityId)
+        .sort((a, b) => b.tickNumber - a.tickNumber)
+        .slice(0, opts.limit);
     },
 
     // --- Goals ---
@@ -178,6 +186,13 @@ export const createTestStore = (): ProactivityStore => {
       const gt = goalTicks.get(goalTickId);
       if (!gt) return;
       goalTicks.set(goalTickId, { ...gt, ...patch });
+    },
+
+    async listGoalTicks(tickId) {
+      return [...goalTicks.entries()]
+        .filter(([, gt]) => gt.tickId === tickId)
+        .map(([gtId, gt]) => ({ id: gtId, ...gt }))
+        .sort((a, b) => a.orderIndex - b.orderIndex);
     },
 
     // --- Attempts ---

@@ -4,6 +4,7 @@ import type {
   EntityState,
   GoalMutation,
   GoalRecord,
+  GoalTickRecord,
   InsertAttempt,
   InsertAttemptResult,
   InsertGoalTick,
@@ -141,6 +142,15 @@ const toGoalRecord = (row: Record<string, unknown>): GoalRecord => ({
   updatedAt: new Date(row.updated_at as string),
 });
 
+const toGoalTick = (row: Record<string, unknown>): GoalTickRecord => ({
+  id: row.id as string,
+  goalId: row.goal_id as string,
+  tickId: row.tick_id as string,
+  orderIndex: row.order_index as number,
+  acted: row.acted as boolean,
+  summary: row.summary as string,
+});
+
 const toAttempt = (row: Record<string, unknown>): ActionAttempt => ({
   id: row.id as string,
   goalId: row.goal_id as string,
@@ -244,6 +254,14 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
       return rows[0] ? new Date(rows[0].started_at as string) : null;
     },
 
+    async listRecentTicks(entityId, opts) {
+      const { rows } = await query(
+        "SELECT * FROM proactivity_ticks WHERE entity_id = $1 ORDER BY tick_number DESC LIMIT $2",
+        [entityId, opts.limit],
+      );
+      return rows.map(toTickRecord);
+    },
+
     // --- Goals ---
 
     async listGoals(entityId, filter) {
@@ -323,6 +341,14 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
         "UPDATE proactivity_goal_ticks SET acted = $2, summary = $3 WHERE id = $1",
         [goalTickId, patch.acted, patch.summary],
       );
+    },
+
+    async listGoalTicks(tickId) {
+      const { rows } = await query(
+        "SELECT * FROM proactivity_goal_ticks WHERE tick_id = $1 ORDER BY order_index",
+        [tickId],
+      );
+      return rows.map(toGoalTick);
     },
 
     // --- Attempts ---
