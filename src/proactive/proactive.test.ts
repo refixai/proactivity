@@ -548,8 +548,11 @@ describe("observe", () => {
       entityId: "e1",
       event: { type: "tool_call", name: "LINEAR_LIST_ISSUES", args: { assignee: "me" } },
     });
-    // Model text is deliberately not narrated.
-    narrate({ type: "agent_event", entityId: "e1", event: { type: "model", content: "hmm" } });
+    narrate({
+      type: "agent_event",
+      entityId: "e1",
+      event: { type: "model", content: "two tickets changed — worth a brief" },
+    });
     narrate({
       type: "governance",
       entityId: "e1",
@@ -561,19 +564,30 @@ describe("observe", () => {
       type: "reflection",
       entityId: "e1",
       ledgerEntry: "briefed 2 changed tickets",
-      goalMutationCount: 1,
+      goalMutations: [{ op: "update_findings", goalId: "g1", findings: "…" }],
       nextWakeMinutes: 1.5,
       nextWakeReasoning: "activity is fresh",
-      warnings: [],
+      warnings: ["model omitted nextWakeMinutes; used the default"],
+    });
+    narrate({
+      type: "wake_completed",
+      entityId: "e1",
+      tickNumber: 3,
+      acted: true,
+      nextWakeMs: 90_000,
     });
     narrate({ type: "wake_failed", entityId: "e1", error: new Error("boom") });
 
-    expect(lines).toEqual([
+    expect(lines.slice(0, 6)).toEqual([
       "[proactive:e1] wake #3 (scheduled) — 2 goals, last wake 2m ago",
       '[proactive:e1] ⚙ LINEAR_LIST_ISSUES {"assignee":"me"}',
+      "[proactive:e1] 💭 two tickets changed — worth a brief",
       "[proactive:e1] ⛔ send_brief — hard_denied: duplicate of attempt a1",
-      "[proactive:e1] ✎ briefed 2 changed tickets [1 goal mutation(s)] — next wake in 90s (activity is fresh)",
-      "[proactive:e1] ✗ wake failed: boom",
+      "[proactive:e1] ✎ briefed 2 changed tickets [goals: update_findings] — next wake in 90s (activity is fresh)",
+      "[proactive:e1] ⚠ reflection: model omitted nextWakeMinutes; used the default",
     ]);
+    // The done line carries a wall-clock time; assert shape, not the clock.
+    expect(lines[6]).toContain("wake #3 done (acted) — next wake at ");
+    expect(lines[7]).toBe("[proactive:e1] ✗ wake failed: boom");
   });
 });

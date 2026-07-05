@@ -1,16 +1,20 @@
 // The default observer: a compact console narration of the proactive loop.
 //
 // A background agent's worst failure mode is silence — "did it even wake?" —
-// so proactive() narrates by default. One line per meaningful moment:
+// so proactive() narrates by default. One line per meaningful moment,
+// including what the model was thinking (clipped) and, at the end of the
+// wake, exactly when the next one lands:
 //
 //   [proactive:user-1] wake #3 (scheduled) — 1 goal, last wake 2m ago
 //   [proactive:user-1] ⚙ LINEAR_LIST_LINEAR_ISSUES {"assignee":"me"}
+//   [proactive:user-1] 💭 Two tickets changed since the last brief — worth sending…
 //   [proactive:user-1] ✔ send_brief — taken
 //   [proactive:user-1] ✎ briefed 2 changed tickets — next wake in 90s (activity is fresh)
+//   [proactive:user-1] wake #3 done (acted) — next wake at 1:19:45 AM
 //
-// Model text is deliberately not narrated (too noisy for a console line); it
-// still reaches custom observers via agent_event and reflection via the
-// transcript.
+// Custom observers get the unclipped stream (full model text, full args, the
+// reflection's goal mutations); the narrator only decides what a console line
+// can carry.
 
 import type { ProactiveEvent } from "./types.js";
 
@@ -58,6 +62,9 @@ export const consoleNarrator = (
       case "agent_event":
         if (event.event.type === "tool_call") {
           log(`${tag} ⚙ ${event.event.name} ${clip(event.event.args, 160)}`);
+        } else if (event.event.content) {
+          // The model's visible thinking, one clipped line per turn.
+          log(`${tag} 💭 ${clip(event.event.content, 200)}`);
         }
         break;
       case "governance": {
@@ -70,15 +77,23 @@ export const consoleNarrator = (
       }
       case "reflection": {
         const mutations =
-          event.goalMutationCount > 0 ? ` [${event.goalMutationCount} goal mutation(s)]` : "";
+          event.goalMutations.length > 0
+            ? ` [goals: ${event.goalMutations.map((m) => m.op).join(", ")}]`
+            : "";
         log(
           `${tag} ✎ ${clip(event.ledgerEntry, 200)}${mutations} — ` +
             `next wake in ${human(event.nextWakeMinutes * 60_000)} (${clip(event.nextWakeReasoning, 120)})`,
         );
+        for (const warning of event.warnings) {
+          log(`${tag} ⚠ reflection: ${clip(warning, 160)}`);
+        }
         break;
       }
       case "wake_completed":
-        // The reflection line already told the story; a "done" line would be noise.
+        log(
+          `${tag} wake #${event.tickNumber} done (${event.acted ? "acted" : "no action"}) — ` +
+            `next wake at ${new Date(Date.now() + event.nextWakeMs).toLocaleTimeString()}`,
+        );
         break;
       case "wake_failed":
         log(

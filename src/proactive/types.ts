@@ -4,6 +4,7 @@
 // learn from after. Nothing here requires restructuring an existing agent.
 
 import type {
+  GoalMutation,
   GoalPriority,
   GoalRecord,
   GovernanceOutcome,
@@ -67,7 +68,7 @@ export type ProactiveEvent =
       type: "reflection";
       entityId: string;
       ledgerEntry: string;
-      goalMutationCount: number;
+      goalMutations: GoalMutation[];
       nextWakeMinutes: number;
       nextWakeReasoning: string;
       warnings: string[];

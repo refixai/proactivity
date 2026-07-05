@@ -76,14 +76,16 @@ const sendBrief = governed(mySendBriefTool, { target: (args) => ({ userId: args.
 ```
 
 The loop narrates itself — no logging code to write. Wake starts, each tool
-call (streamed live by the adapters), governance outcomes, and reflection's
-verdict print as compact console lines by default:
+call and model thought (streamed live by the adapters), governance outcomes,
+reflection's verdict, and when the next wake lands:
 
 ```
 [proactive:user-123] wake #3 (scheduled) — 1 goal, last wake 2m ago
 [proactive:user-123] ⚙ LINEAR_LIST_ISSUES {"assignee":"me"}
+[proactive:user-123] 💭 Two tickets changed since the last brief — worth sending…
 [proactive:user-123] ✔ send_brief — taken
 [proactive:user-123] ✎ briefed 2 changed tickets — next wake in 90s (activity is fresh)
+[proactive:user-123] wake #3 done (acted) — next wake at 1:19:45 AM
 ```
 
 Route the same event stream into your own logger with `observe: (event) => …`,

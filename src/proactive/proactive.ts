@@ -194,7 +194,7 @@ export const proactive = <TCustom = unknown>(
         type: "reflection",
         entityId: boundary.entityId,
         ledgerEntry: reflection.ledgerEntry,
-        goalMutationCount: reflection.goalMutations.length,
+        goalMutations: reflection.goalMutations,
         nextWakeMinutes: reflection.nextWakeMinutes,
         nextWakeReasoning: reflection.nextWakeReasoning,
         warnings: reflection.warnings,
