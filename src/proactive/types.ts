@@ -131,6 +131,9 @@ export type WakeContext = {
   goals: GoalRecord[];
   // Recent past wakes, most recent first.
   ledger: LedgerWake[];
+  // Rolling AI summary of wakes older than the recent window. Null unless
+  // report.summarizeOlderWakes is on and wakes have aged out of the window.
+  ledgerSummary: string | null;
   // The rendered situation report — what the agent receives by default when
   // no `input` callback is configured. Exposed so a custom callback can embed
   // it instead of rebuilding it.
@@ -257,6 +260,11 @@ export type ProactiveConfig<TCustom = unknown> = {
   report?: {
     // How many past wakes the situation report includes verbatim. Default 5.
     recentWakes?: number;
+    // Long-term memory: after each wake, fold wakes that aged out of the
+    // recent window into a rolling AI summary (one extra reflection-model
+    // call per wake once history exceeds the window). The report gains an
+    // "Older wakes" section, so wake #500 still knows what wake #3 promised.
+    summarizeOlderWakes?: boolean;
   };
   // Live narration of the loop. Omit for the built-in console narrator; pass
   // a function to route events into your own logger; `false` to silence. An

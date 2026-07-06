@@ -41,6 +41,7 @@ import type {
 } from "../core/types.js";
 import { addGoal, completeGoal } from "../proactive/goalsApi.js";
 import { describeGovernanceOutcome } from "../proactive/governed.js";
+import { foldOlderWakes } from "../proactive/ledgerSummary.js";
 import { parseDuration, type Duration } from "../proactive/duration.js";
 import { runReflection } from "../proactive/reflect.js";
 import { loadLedger, renderReport } from "../proactive/report.js";
@@ -147,6 +148,7 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
   const caps: GovernanceCaps = { perPass: perWake, perTick: perWake };
   const seeds = normalizeGoalSeeds(config.goals);
   const recentWakes = config.report?.recentWakes ?? DEFAULT_RECENT_WAKES;
+  const summarizeOlderWakes = config.report?.summarizeOlderWakes ?? false;
 
   // Rebuild the governance envelope from serialized ids + the shared store.
   // The ledger is re-warmed from the store's attempt rows so per-wake caps
@@ -269,6 +271,9 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
           }
           const goals = await store.listGoals(entityId, { status: ["active", "paused"] });
           const ledger = await loadLedger(store, entityId, tick.tickId, recentWakes);
+          const ledgerSummary = summarizeOlderWakes
+            ? ((await store.getState(entityId))?.ledgerSummary ?? null)
+            : null;
           const briefing = renderReport({
             entityId,
             tickId: tick.tickId,
@@ -278,6 +283,7 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
             lastWakeAt: tick.lastWakeAtIso ? new Date(tick.lastWakeAtIso) : null,
             goals,
             ledger,
+            ledgerSummary,
           });
           return { due: true, briefing };
         },
@@ -373,6 +379,7 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
                 lastWakeAt: tick.lastWakeAtIso ? new Date(tick.lastWakeAtIso) : null,
                 goals,
                 ledger: [],
+                ledgerSummary: null,
                 report: "",
               },
               transcript: { events, finalOutput: report },
@@ -412,6 +419,22 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
             lastTickAt: now,
             nextScheduledTickAt: new Date(now.getTime() + nextMs),
           });
+
+          // Long-term memory: fold wakes that just aged out of the window.
+          // Non-fatal — an unadvanced marker means the next wake retries.
+          if (summarizeOlderWakes) {
+            try {
+              await foldOlderWakes({
+                store,
+                model,
+                entityId,
+                completedTickNumber: tick.tickNumber,
+                recentWakes,
+              });
+            } catch (error) {
+              console.error(`[eve-proactivity] ledger fold failed for "${entityId}":`, error);
+            }
+          }
 
           state.update(() => null);
           return {

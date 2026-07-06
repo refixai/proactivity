@@ -6,7 +6,7 @@
 // noteworthy is the agent's job; the report's job is to make the agent's
 // past self available to its present self.
 
-import type { ProactivityStore } from "../core/types.js";
+import type { ProactivityStore, TickRecord } from "../core/types.js";
 import type { LedgerWake, WakeContext } from "./types.js";
 
 const formatAgo = (from: Date, to: Date): string => {
@@ -19,20 +19,14 @@ const formatAgo = (from: Date, to: Date): string => {
   return `${Math.round(hours / 24)}d`;
 };
 
-// Ledger view of past wakes, most recent first. The current (running) tick is
-// excluded — it has no story yet.
-export const loadLedger = async (
+// Tick rows → rendered ledger wakes (summary from the goal-tick, actions from
+// the audit trail). Shared by the report window and ledger compaction.
+export const loadWakesForTicks = (
   store: ProactivityStore,
-  entityId: string,
-  currentTickId: string,
-  window: number,
-): Promise<LedgerWake[]> => {
-  const ticks = (await store.listRecentTicks(entityId, { limit: window + 1 })).filter(
-    (t) => t.id !== currentTickId,
-  );
-
-  return Promise.all(
-    ticks.slice(0, window).map(async (tick) => {
+  ticks: TickRecord[],
+): Promise<LedgerWake[]> =>
+  Promise.all(
+    ticks.map(async (tick) => {
       const [goalTicks, attempts] = await Promise.all([
         store.listGoalTicks(tick.id),
         store.listAttempts(tick.id),
@@ -52,6 +46,33 @@ export const loadLedger = async (
       };
     }),
   );
+
+// Ledger view of past wakes, most recent first. The current (running) tick is
+// excluded — it has no story yet.
+export const loadLedger = async (
+  store: ProactivityStore,
+  entityId: string,
+  currentTickId: string,
+  window: number,
+): Promise<LedgerWake[]> => {
+  const ticks = (await store.listRecentTicks(entityId, { limit: window + 1 })).filter(
+    (t) => t.id !== currentTickId,
+  );
+  return loadWakesForTicks(store, ticks.slice(0, window));
+};
+
+// One past wake as markdown lines — the same shape the report shows, reused
+// by ledger compaction so the summarizer reads what the agent would have.
+export const renderWake = (wake: LedgerWake): string[] => {
+  const lines = [
+    `### Wake #${wake.tickNumber} — ${wake.at.toISOString()} (${wake.status}${wake.trigger === "manual" ? ", manual" : ""})`,
+    wake.summary || "(no summary recorded)",
+  ];
+  for (const action of wake.actions) {
+    lines.push(`- ${action.actionType} ${safeStringify(action.target)} → ${action.outcome}`);
+  }
+  if (wake.cadenceReasoning) lines.push(`- next-wake reasoning: ${wake.cadenceReasoning}`);
+  return lines;
 };
 
 export const renderReport = (ctx: Omit<WakeContext, "report">): string => {
@@ -86,15 +107,15 @@ export const renderReport = (ctx: Omit<WakeContext, "report">): string => {
     lines.push("(none yet)");
   } else {
     for (const wake of ctx.ledger) {
-      const header = `### Wake #${wake.tickNumber} — ${wake.at.toISOString()} (${wake.status}${wake.trigger === "manual" ? ", manual" : ""})`;
-      lines.push(header);
-      lines.push(wake.summary || "(no summary recorded)");
-      for (const action of wake.actions) {
-        lines.push(`- ${action.actionType} ${safeStringify(action.target)} → ${action.outcome}`);
-      }
-      if (wake.cadenceReasoning) lines.push(`- next-wake reasoning: ${wake.cadenceReasoning}`);
+      lines.push(...renderWake(wake));
       lines.push("");
     }
+  }
+
+  if (ctx.ledgerSummary) {
+    lines.push("## Older wakes (rolling summary)");
+    lines.push(ctx.ledgerSummary);
+    lines.push("");
   }
 
   lines.push("## How to proceed");

@@ -760,3 +760,76 @@ describe("reflection.run", () => {
     expect(goalTick!.summary).toContain("reflection run override failed: sub-agent exploded");
   });
 });
+
+// --- report.summarizeOlderWakes: long-term memory ---------------------------
+
+describe("ledger summary (summarizeOlderWakes)", () => {
+  test("folds aged-out wakes into a rolling summary the next report carries", async () => {
+    const store = createTestStore();
+    const { adapter, calls } = makeAdapter();
+    // Calls alternate: reflect #1, reflect #2, fold(wake1), reflect #3, fold(wake2)
+    const { model, prompts } = makeModel(
+      reflection({ ledgerEntry: "wake one: briefed the full backlog" }),
+      reflection(),
+      { summary: "Epoch so far: wake #1 briefed the full backlog (6 tickets)." },
+      reflection(),
+      { summary: "Epoch so far: wakes #1-2 covered the backlog and one delta." },
+    );
+    const handle = proactive(adapter, {
+      reflection: { model },
+      store,
+      observe: false,
+      report: { recentWakes: 1, summarizeOlderWakes: true },
+    });
+
+    await handle.wake("e1"); // nothing old enough to fold
+    let state = (await store.getState("e1"))!;
+    expect(state.ledgerSummary).toBeNull();
+
+    await handle.wake("e1"); // wake #1 ages out → folded
+    state = (await store.getState("e1"))!;
+    expect(state.ledgerSummary).toContain("wake #1 briefed the full backlog");
+    expect(state.ledgerSummaryThroughTick).toBe(1);
+    // The fold prompt carried the aged-out wake's ledger entry.
+    expect(prompts[2]).toContain("# Ledger compaction");
+    expect(prompts[2]).toContain("wake one: briefed the full backlog");
+
+    await handle.wake("e1"); // report now shows summary + only wake #2 verbatim
+    const message = calls[2]!.message;
+    expect(message).toContain("## Older wakes (rolling summary)");
+    expect(message).toContain("wake #1 briefed the full backlog");
+    expect(message).not.toContain("wake one: briefed the full backlog"); // verbatim entry aged out
+    expect(calls[2]!.context.ledgerSummary).toContain("wake #1");
+  });
+
+  test("a failed fold never fails the wake; the next wake retries", async () => {
+    const store = createTestStore();
+    const { adapter } = makeAdapter();
+    const errors: unknown[] = [];
+    const { model } = makeModel(
+      reflection(),
+      reflection(),
+      new Error("summarizer down"), // fold after wake #2 fails
+      reflection(),
+      { summary: "recovered: wakes #1-2 in one epoch." }, // retry folds both
+    );
+    const handle = proactive(adapter, {
+      reflection: { model },
+      store,
+      observe: false,
+      report: { recentWakes: 1, summarizeOlderWakes: true },
+      onError: (error) => errors.push(error),
+    });
+
+    await handle.wake("e1");
+    await handle.wake("e1"); // fold fails
+    expect(errors).toHaveLength(1);
+    expect((await store.getLatestTick("e1"))!.status).toBe("completed");
+    expect((await store.getState("e1"))!.ledgerSummary).toBeNull();
+
+    await handle.wake("e1"); // fold retries and catches up through wake #2
+    const state = (await store.getState("e1"))!;
+    expect(state.ledgerSummary).toContain("recovered");
+    expect(state.ledgerSummaryThroughTick).toBe(2);
+  });
+});

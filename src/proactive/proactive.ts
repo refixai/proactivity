@@ -25,6 +25,7 @@ import { createTestStore } from "../memory/index.js";
 import { createTimerAdapter } from "../timer/index.js";
 import { parseDuration } from "./duration.js";
 import { addGoal, completeGoal } from "./goalsApi.js";
+import { foldOlderWakes } from "./ledgerSummary.js";
 import { consoleNarrator } from "./observe.js";
 import { runReflection } from "./reflect.js";
 import { loadLedger, renderReport } from "./report.js";
@@ -81,6 +82,15 @@ export const proactive = <TCustom = unknown>(
 
   const seeds = normalizeGoalSeeds(config.goals);
   const recentWakes = config.report?.recentWakes ?? DEFAULT_RECENT_WAKES;
+  const summarizeOlderWakes = config.report?.summarizeOlderWakes ?? false;
+
+  // Infra-error sink, shared by scheduled-wake failures and the ledger fold
+  // (both non-fatal to the loop, both wrong to swallow silently).
+  const reportError =
+    config.onError ??
+    ((error: unknown, entityId: string) => {
+      console.error(`[proactive] background error for "${entityId}":`, error);
+    });
 
   // The heartbeat callback doesn't receive the trigger (it's a tick-row
   // concern), but the report wants to tell the agent "you were woken
@@ -143,6 +153,9 @@ export const proactive = <TCustom = unknown>(
 
       // --- INJECT: the situation report ---
       const ledger = await loadLedger(store, boundary.entityId, boundary.tickId, recentWakes);
+      const ledgerSummary = summarizeOlderWakes
+        ? ((await store.getState(boundary.entityId))?.ledgerSummary ?? null)
+        : null;
       const contextBase: Omit<WakeContext, "report"> = {
         entityId: boundary.entityId,
         tickId: boundary.tickId,
@@ -152,6 +165,7 @@ export const proactive = <TCustom = unknown>(
         lastWakeAt: boundary.previousTickStartedAt,
         goals,
         ledger,
+        ledgerSummary,
       };
       const report = renderReport(contextBase);
       const context: WakeContext = { ...contextBase, report };
@@ -231,6 +245,23 @@ export const proactive = <TCustom = unknown>(
           : reflection.ledgerEntry;
       await store.updateGoalTick(goalTickId, { acted, summary });
 
+      // --- Long-term memory: fold wakes that just aged out of the window ---
+      // Off the wake's critical narrative (the ledger entry is written); a
+      // failure only leaves the marker unadvanced, so the next wake retries.
+      if (summarizeOlderWakes) {
+        try {
+          await foldOlderWakes({
+            store,
+            model: config.reflection.model,
+            entityId: boundary.entityId,
+            completedTickNumber: boundary.tickNumber,
+            recentWakes,
+          });
+        } catch (error) {
+          reportError(error, boundary.entityId);
+        }
+      }
+
       const nextTickMs = Math.round(reflection.nextWakeMinutes * 60_000);
       emit({
         type: "wake_completed",
@@ -266,11 +297,7 @@ export const proactive = <TCustom = unknown>(
         lastTrigger.delete(entityId);
       }
     },
-    onError:
-      config.onError ??
-      ((error, entityId) => {
-        console.error(`[proactive] scheduled wake failed for "${entityId}":`, error);
-      }),
+    onError: reportError,
   });
 
   return {
