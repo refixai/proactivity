@@ -1,4 +1,10 @@
-# @refix/proactivity
+<div align="center">
+
+# 🪩 Proactivity
+
+### Make your reactive agents proactive
+
+</div>
 
 <p align="center">
   <img src="https://img.shields.io/badge/LangGraph-000000?style=flat-square&logo=langchain&logoColor=white" alt="LangGraph" />
