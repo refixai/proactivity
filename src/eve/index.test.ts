@@ -193,6 +193,25 @@ describe("createEveProactivity", () => {
     expect(nudged).toEqual(["t1"]);
   });
 
+  test("addGoal/completeGoal work outside sessions; wakeNext marks the entity due", async () => {
+    const { store, eve } = setup();
+
+    const goal = await eve.addGoal(
+      { title: "Watch thread t9", objective: "o", doneCondition: "d", pinned: true },
+      { wakeNext: true },
+    );
+    expect(goal.id).toBe("watch-thread-t9");
+    expect(goal.pinned).toBe(true);
+    expect((await eve.listGoals()).map((g) => g.id)).toContain("watch-thread-t9");
+
+    // wakeNext: the due-gate lets the next cron firing through.
+    const state = (await store.getState("eve-e1"))!;
+    expect(state.nextScheduledTickAt!.getTime()).toBeLessThanOrEqual(Date.now());
+
+    await eve.completeGoal("watch-thread-t9", "resolved");
+    await expect(eve.completeGoal("watch-thread-t9")).rejects.toThrow(/already completed/);
+  });
+
   test("scheduleMarkdown names the tool files and the terminal step", () => {
     const { eve } = setup();
     const markdown = eve.scheduleMarkdown("Focus on unanswered DMs.");

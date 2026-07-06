@@ -18,6 +18,7 @@ export {
 } from "./reflect.js";
 export { loadLedger, renderReport } from "./report.js";
 export type {
+  AddGoalOptions,
   AgentRunInput,
   GoalSeed,
   LedgerWake,

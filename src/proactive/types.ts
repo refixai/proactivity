@@ -7,6 +7,7 @@ import type {
   GoalMutation,
   GoalPriority,
   GoalRecord,
+  GoalStatus,
   GovernanceOutcome,
   ProactivityStore,
   SchedulerAdapter,
@@ -260,6 +261,13 @@ export type ReflectPromptContext = {
 
 // --- Handle ---
 
+export type AddGoalOptions = {
+  // Also wake the entity immediately so the new goal gets looked at now
+  // (same semantics as handle.wake() — it will not resurrect a stopped loop's
+  // schedule beyond this one look).
+  wake?: boolean;
+};
+
 export type ProactiveHandle = {
   // Begin the loop for an entity. One loop per entity; the first wake fires
   // after cadence.default.
@@ -272,6 +280,14 @@ export type ProactiveHandle = {
   // Re-arm every entity the store says should be running — call once after a
   // process restart when using a durable store.
   resume(): Promise<void>;
+  // Runtime goal management — the "my user clicked watch-this" API. addGoal
+  // is idempotent on the goal id (explicit or slugified from the title) and
+  // may create pinned goals; completeGoal works on pinned goals too (the
+  // pinned shield binds reflection, not you) and throws on unknown or
+  // already-terminal goals.
+  addGoal(entityId: string, goal: GoalSeed, opts?: AddGoalOptions): Promise<GoalRecord>;
+  completeGoal(entityId: string, goalId: string, reason?: string): Promise<void>;
+  listGoals(entityId: string, filter?: { status?: GoalStatus[] }): Promise<GoalRecord[]>;
   // The store, exposed for power users (dashboards, custom queries). Same
   // engine the primitives use — ejecting is not a migration.
   store: ProactivityStore;

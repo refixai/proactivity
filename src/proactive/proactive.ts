@@ -24,6 +24,7 @@ import type {
 import { createTestStore } from "../memory/index.js";
 import { createTimerAdapter } from "../timer/index.js";
 import { parseDuration } from "./duration.js";
+import { addGoal, completeGoal } from "./goalsApi.js";
 import { consoleNarrator } from "./observe.js";
 import { runReflection } from "./reflect.js";
 import { loadLedger, renderReport } from "./report.js";
@@ -116,6 +117,16 @@ export const proactive = <TCustom = unknown>(
 
       // --- Ensure declared goals exist (idempotent on stable ids) ---
       goals = await ensureSeededGoals(store, boundary.entityId, seeds);
+
+      // Every declared goal can be completed externally (handle.completeGoal);
+      // seeding won't resurrect a terminal goal, so an empty portfolio is a
+      // reachable state, not a bug — skip the wake instead of crashing it.
+      if (goals.length === 0) {
+        const reason =
+          "no active goals — add one with handle.addGoal() or declare goals in config";
+        emit({ type: "wake_skipped", entityId: boundary.entityId, reason });
+        return { cadenceHint: { nextTickMs: cadence.default, reasoning: reason } };
+      }
 
       // --- Primary goal: where this wake's governed actions attribute ---
       const primary = pickPrimaryGoal(goals);
@@ -265,6 +276,13 @@ export const proactive = <TCustom = unknown>(
     stop: (entityId) => scheduler.stop(entityId),
     wake: (entityId) => scheduler.triggerNow(entityId),
     resume: () => scheduler.seedFromStore(),
+    async addGoal(entityId, goal, opts) {
+      const record = await addGoal(store, entityId, goal);
+      if (opts?.wake) await scheduler.triggerNow(entityId);
+      return record;
+    },
+    completeGoal: (entityId, goalId, reason) => completeGoal(store, entityId, goalId, reason),
+    listGoals: (entityId, filter) => store.listGoals(entityId, filter),
     store,
   };
 };

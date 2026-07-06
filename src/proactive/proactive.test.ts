@@ -591,3 +591,106 @@ describe("observe", () => {
     expect(lines[7]).toBe("[proactive:e1] ✗ wake failed: boom");
   });
 });
+
+// --- Runtime goal APIs ------------------------------------------------------
+
+describe("handle goal APIs", () => {
+  test("addGoal creates idempotently, slugs the id, and persists pinnedness", async () => {
+    const store = createTestStore();
+    const { adapter } = makeAdapter();
+    const { model } = makeModel(reflection());
+    const handle = proactive(adapter, { reflection: { model }, store, observe: false });
+
+    const goal = await handle.addGoal("e1", {
+      title: "Watch ticket REX-145",
+      objective: "Track it until it ships",
+      doneCondition: "REX-145 is done",
+      pinned: true,
+    });
+    expect(goal.id).toBe("watch-ticket-rex-145");
+    expect(goal.pinned).toBe(true);
+
+    // Same title again → same record, no duplicate.
+    const again = await handle.addGoal("e1", {
+      title: "Watch ticket REX-145",
+      objective: "different objective — ignored",
+      doneCondition: "d",
+    });
+    expect(again.id).toBe(goal.id);
+    expect(await handle.listGoals("e1")).toHaveLength(1);
+  });
+
+  test("addGoal with wake: true wakes the entity immediately", async () => {
+    const store = createTestStore();
+    const { adapter, calls } = makeAdapter();
+    const { model } = makeModel(reflection());
+    const handle = proactive(adapter, { reflection: { model }, store, observe: false });
+
+    await handle.addGoal(
+      "e1",
+      { title: "Look now", objective: "o", doneCondition: "d" },
+      { wake: true },
+    );
+
+    expect(calls).toHaveLength(1);
+    // The new goal is in the portfolio the wake saw (alongside the fallback).
+    expect(calls[0]!.context.goals.map((g) => g.id)).toContain("look-now");
+  });
+
+  test("a runtime-added pinned goal is shielded from reflection", async () => {
+    const store = createTestStore();
+    const { adapter } = makeAdapter();
+    const { model } = makeModel(
+      reflection({
+        goalMutations: [
+          { op: "complete", goalId: "runtime-pin", reasoning: "model tries to close it" },
+        ],
+      }),
+    );
+    const handle = proactive(adapter, { reflection: { model }, store, observe: false });
+
+    await handle.addGoal("e1", { id: "runtime-pin", title: "Standing", objective: "o", doneCondition: "d", pinned: true });
+    await handle.wake("e1");
+
+    expect((await store.getGoal("runtime-pin"))!.status).toBe("active");
+  });
+
+  test("completeGoal completes once, then refuses", async () => {
+    const store = createTestStore();
+    const { adapter } = makeAdapter();
+    const { model } = makeModel(reflection());
+    const handle = proactive(adapter, { reflection: { model }, store, observe: false });
+
+    await handle.addGoal("e1", { id: "g1", title: "One shot", objective: "o", doneCondition: "d" });
+    await handle.completeGoal("e1", "g1", "shipped");
+    expect((await store.getGoal("g1"))!.status).toBe("completed");
+
+    await expect(handle.completeGoal("e1", "g1")).rejects.toThrow(/already completed/);
+    await expect(handle.completeGoal("e1", "missing")).rejects.toThrow(/no goal/);
+    // Wrong entity: e2 can't complete e1's goal.
+    await expect(handle.completeGoal("e2", "g1")).rejects.toThrow(/no goal/);
+  });
+
+  test("a wake with an all-terminal portfolio skips instead of crashing", async () => {
+    const store = createTestStore();
+    const { adapter, calls } = makeAdapter();
+    const { model } = makeModel(reflection());
+    const events: ProactiveEvent[] = [];
+    const handle = proactive(adapter, {
+      reflection: { model },
+      store,
+      observe: (e) => events.push(e),
+      goals: [{ id: "only", title: "Only goal", objective: "o", doneCondition: "d" }],
+    });
+
+    await handle.wake("e1"); // seeds the goal
+    await handle.completeGoal("e1", "only", "done for good");
+    calls.length = 0;
+    events.length = 0;
+
+    await handle.wake("e1");
+    expect(calls).toHaveLength(0);
+    expect(events.map((e) => e.type)).toEqual(["wake_skipped"]);
+    expect((await store.getLatestTick("e1"))!.status).toBe("completed");
+  });
+});

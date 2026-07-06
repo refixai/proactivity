@@ -34,9 +34,12 @@ import { createGovernance } from "../core/governance.js";
 import { createLedger } from "../core/ledger.js";
 import type {
   CadenceConfig,
+  GoalRecord,
+  GoalStatus,
   GovernanceCaps,
   ProactivityStore,
 } from "../core/types.js";
+import { addGoal, completeGoal } from "../proactive/goalsApi.js";
 import { describeGovernanceOutcome } from "../proactive/governed.js";
 import { parseDuration, type Duration } from "../proactive/duration.js";
 import { runReflection } from "../proactive/reflect.js";
@@ -117,6 +120,12 @@ export type EveProactivity = {
   briefingTool(): EveToolDefinition<Record<string, never>>;
   finishHeartbeatTool(): EveToolDefinition<{ report: string }>;
   governedTool<TArgs>(input: EveGovernedToolInput<TArgs>): EveToolDefinition<TArgs>;
+  // Runtime goal management, same semantics as proactive()'s handle. Eve has
+  // no in-process scheduler to poke, so `wakeNext` marks the entity due —
+  // the NEXT cron firing becomes a real wake instead of a gated no-op.
+  addGoal(goal: GoalSeed, opts?: { wakeNext?: boolean }): Promise<GoalRecord>;
+  completeGoal(goalId: string, reason?: string): Promise<void>;
+  listGoals(filter?: { status?: GoalStatus[] }): Promise<GoalRecord[]>;
   // The recommended markdown for the schedule file.
   scheduleMarkdown(extra?: string): string;
 };
@@ -196,6 +205,32 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
         dryRun: false,
       });
       const goals = await ensureSeededGoals(store, entityId, seeds);
+
+      // All goals completed externally (addGoal/completeGoal are dev-facing) —
+      // a reachable state, not a bug. Close the tick quietly and stay gated.
+      if (goals.length === 0) {
+        const reason = "no active goals — add one with addGoal() or declare goals in config";
+        await store.updateTick(tickId, {
+          status: "completed",
+          completedAt: new Date(),
+          cadenceReasoning: reason,
+        });
+        await store.upsertState(entityId, {
+          lastTickAt: now,
+          nextScheduledTickAt: new Date(now.getTime() + cadence.default),
+        });
+        state.update(() => ({
+          due: false,
+          tickId: "",
+          tickNumber: 0,
+          goalId: "",
+          goalTickId: "",
+          startedAtIso: now.toISOString(),
+          lastWakeAtIso: null,
+        }));
+        return;
+      }
+
       const primary = pickPrimaryGoal(goals);
       if (!primary) throw new Error("eve proactivity: no goal available to attribute the wake to");
       const goalTickId = await store.insertGoalTick({
@@ -385,6 +420,19 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
         },
       };
     },
+
+    async addGoal(goal, opts) {
+      const record = await addGoal(store, entityId, goal);
+      if (opts?.wakeNext) {
+        // Mark the entity due: the next cron firing passes the due-gate.
+        await store.upsertState(entityId, { nextScheduledTickAt: new Date() });
+      }
+      return record;
+    },
+
+    completeGoal: (goalId, reason) => completeGoal(store, entityId, goalId, reason),
+
+    listGoals: (filter) => store.listGoals(entityId, filter),
 
     scheduleMarkdown(extra?: string) {
       return [
