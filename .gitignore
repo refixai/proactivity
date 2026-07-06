@@ -4,3 +4,5 @@ dist
 .DS_Store
 CLAUDE.md
 .internal
+# internal working docs — not part of the published repo
+/docs/

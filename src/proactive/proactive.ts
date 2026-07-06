@@ -2,8 +2,7 @@
 //
 // Wraps an UNCHANGED agent (via a framework adapter) in the full proactive
 // loop, compiled down to the primitives: createHeartbeat + createScheduler +
-// the governance envelope + a store. Every wake runs the four moments from
-// docs/implementation-philosophy.md:
+// the governance envelope + a store. Every wake runs four moments:
 //
 //   INJECT    render the situation report from the store
 //   RUN       adapter.run(...) inside the tick scope (governed() tools attach here)

@@ -1,7 +1,7 @@
 // Types for the proactive() wrapper layer — the default door into the SDK.
-// The design contract these types encode (see docs/implementation-philosophy.md):
-// the developer's agent is a black box we brief before, observe during, and
-// learn from after. Nothing here requires restructuring an existing agent.
+// The design contract these types encode: the developer's agent is a black
+// box we brief before, observe during, and learn from after. Nothing here
+// requires restructuring an existing agent.
 
 import type {
   GoalMutation,
