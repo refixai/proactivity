@@ -108,7 +108,7 @@ describe("anthropicLoop through proactive()", () => {
 
     const store = createTestStore();
     const { model, prompts } = makeReflectionModel();
-    const handle = proactive(adapter, { model, store, observe: false });
+    const handle = proactive(adapter, { reflection: { model }, store, observe: false });
     await handle.wake("workspace-1");
 
     // The side effect ran once; the duplicate was idempotency-denied.

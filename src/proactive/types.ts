@@ -115,7 +115,7 @@ export type LedgerWake = {
   }>;
 };
 
-// Handed to the `input` callback (and embedded in the default situation
+// Handed to the `agentInput` callback (and embedded in the default situation
 // report). This is the statefulness dial: the developer decides how much of
 // it reaches their agent — all of it, some of it, or none (stateless).
 export type WakeContext = {
@@ -141,10 +141,10 @@ export type WakeContext = {
 export type AgentRunInput<TCustom = unknown> = {
   context: WakeContext;
   // The default payload: the situation report, ready to hand to the agent as
-  // a user message. Used when the developer supplied no `input` callback.
+  // a user message. Used when the developer supplied no `agentInput` callback.
   message: string;
-  // The `input` callback's output, when configured — adapter-specific shape
-  // (a LangGraph state object, an Anthropic message list, …).
+  // The `agentInput` callback's output, when configured — adapter-specific
+  // shape (a LangGraph state object, an Anthropic message list, …).
   custom?: TCustom;
   // Live transcript feed: adapters call this as they record each event, so
   // the observer narrates DURING the run, not after it. Optional — an adapter
@@ -181,30 +181,38 @@ export type GoalSeed = {
 // "is it worth waking the model at all?" (cost control). It must never answer
 // "here's what matters" — that judgment belongs to the agent. Return false to
 // skip the wake; the tick is still recorded and cadence backs off.
-export type GateContext = {
+export type ShouldWakeContext = {
   entityId: string;
   now: Date;
   lastWakeAt: Date | null;
   goals: GoalRecord[];
 };
 
-export type ProactiveConfig<TCustom = unknown> = {
-  // The developer's own LLM — powers reflection. Required: reflection is
-  // always on, and this is the one parameter it needs.
+// Free-text guidance appended into the matching sections of the default
+// reflection prompt ("how to think about goals for this product: …").
+export type ReflectionInstructions = {
+  goals?: string;
+  scheduling?: string;
+  ledger?: string;
+};
+
+// Everything reflection-related lives under one key: reflection is the SDK's
+// own reasoning step (bookkeeping + pacing after each wake), and grouping it
+// keeps `model` from reading as "the model my agent runs on" — it isn't; the
+// agent is a black box with its own.
+export type ReflectionConfig = {
+  // The developer's own LLM behind the ReasoningModel interface. Required:
+  // reflection is always on, and this is the one parameter it needs.
   model: ReasoningModel;
-  goals?: GoalSeed[];
-  // Free-text guidance appended into the matching sections of the default
-  // reflection prompt ("how to think about goals for this product: …").
-  instructions?: {
-    goals?: string;
-    scheduling?: string;
-    ledger?: string;
-  };
+  instructions?: ReflectionInstructions;
   // Full prompt takeover for the rare case appending isn't enough. The output
   // schema stays enforced either way.
-  prompts?: {
-    reflect?: (ctx: ReflectPromptContext) => string;
-  };
+  prompt?: (ctx: ReflectPromptContext) => string;
+};
+
+export type ProactiveConfig<TCustom = unknown> = {
+  reflection: ReflectionConfig;
+  goals?: GoalSeed[];
   cadence?: {
     min?: Duration;
     max?: Duration;
@@ -215,14 +223,21 @@ export type ProactiveConfig<TCustom = unknown> = {
   store?: ProactivityStore;
   // Defaults to the in-process timer adapter — swap for BullMQ in prod.
   schedule?: SchedulerAdapter;
-  // Governance ceiling per wake, applied when any tools are governed().
-  caps?: { perWake?: number };
-  gate?: (ctx: GateContext) => boolean | Promise<boolean>;
+  governance?: {
+    // Ceiling on governed actions that may RUN per wake (further dispatches
+    // are hard-denied). Applies when any tools are governed(). Default 10.
+    maxActionsPerWake?: number;
+  };
+  shouldWake?: (ctx: ShouldWakeContext) => boolean | Promise<boolean>;
   // The statefulness dial: shape exactly what reaches the agent each wake.
-  // Omit it and the rendered situation report arrives as the user message.
-  input?: (ctx: WakeContext) => TCustom;
-  // How many past wakes the situation report includes. Default 5.
-  ledgerWindow?: number;
+  // Omit it and the rendered situation report arrives as the user message;
+  // set it and your return value is handed to the adapter instead (the
+  // rendered report is still available as ctx.report to embed).
+  agentInput?: (ctx: WakeContext) => TCustom;
+  report?: {
+    // How many past wakes the situation report includes verbatim. Default 5.
+    recentWakes?: number;
+  };
   // Live narration of the loop. Omit for the built-in console narrator; pass
   // a function to route events into your own logger; `false` to silence. An
   // observer that throws is swallowed — it can never break a wake.
@@ -240,7 +255,7 @@ export type ReflectPromptContext = {
   goals: GoalRecord[];
   pinnedGoalIds: string[];
   cadence: { minMs: number; maxMs: number };
-  instructions: NonNullable<ProactiveConfig["instructions"]>;
+  instructions: ReflectionInstructions;
 };
 
 // --- Handle ---

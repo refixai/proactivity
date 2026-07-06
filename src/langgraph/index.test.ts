@@ -122,7 +122,7 @@ describe("fromLangGraph through proactive()", () => {
 
     const store = createTestStore();
     const { model, prompts } = makeReflectionModel();
-    const handle = proactive(fromLangGraph(agent), { model, store, observe: false });
+    const handle = proactive(fromLangGraph(agent), { reflection: { model }, store, observe: false });
 
     await handle.wake("workspace-1");
 

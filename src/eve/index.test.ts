@@ -50,12 +50,12 @@ const setup = (opts: { perWake?: number } = {}) => {
 
   const eve = createEveProactivity({
     store,
-    model,
+    reflection: { model },
     entityId: "eve-e1",
     state,
     goals: [{ id: "watch", title: "Watch replies", objective: "o", doneCondition: "d", pinned: true }],
     cadence: { min: "15m", max: "24h" },
-    ...(opts.perWake !== undefined ? { caps: { perWake: opts.perWake } } : {}),
+    ...(opts.perWake !== undefined ? { governance: { maxActionsPerWake: opts.perWake } } : {}),
   });
 
   const sendNudge = eve.governedTool<{ threadId: string }>({

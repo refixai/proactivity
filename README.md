@@ -50,7 +50,7 @@ import { fromLangGraph, governed, langchainModel } from "@refix/proactivity/lang
 
 // agent = the createReactAgent / StateGraph you already have. Unchanged.
 const handle = proactive(fromLangGraph(agent), {
-  model: langchainModel(llm),          // your own LLM — powers reflection
+  reflection: { model: langchainModel(llm) }, // your own LLM — powers the SDK's reflection step
   goals: [{ title: "Keep me briefed on Linear", objective: "Brief on change; silence otherwise.", doneCondition: "Standing", pinned: true }],
   cadence: { min: "15m", max: "24h" },
   store: memoryStore(),                // createPostgresStore(...) in prod
@@ -62,7 +62,7 @@ await handle.wake("user-123");         // or wake it NOW (webhooks enter here)
 
 Every wake runs four moments:
 
-1. **Inject** — a situation report built from the store (goals + their scratchpads, recent wakes, actions already taken) arrives as the agent's message. Shape it or replace it with the `input` callback — statefulness is your dial.
+1. **Inject** — a situation report built from the store (goals + their scratchpads, recent wakes, actions already taken) arrives as the agent's message. Shape it or replace it with the `agentInput` callback — statefulness is your dial.
 2. **Run** — your unchanged agent executes. Tools you wrapped with `governed()` pass through the governance envelope (idempotency claimed *before* the side effect, caps, audit row); everything else runs untouched. Outside a wake, governed tools are transparent passthroughs.
 3. **Reflect** — one structured-output call on *your* model reads the full transcript and writes the ledger entry, evolves each goal's scratchpad, and picks the next wake time. Always on; a failed reflection degrades to safe defaults instead of failing the wake.
 4. **Schedule** — the scheduler re-arms at the reflected cadence.

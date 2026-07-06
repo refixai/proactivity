@@ -38,16 +38,16 @@ import type {
   WakeContext,
 } from "./types.js";
 
-const DEFAULT_LEDGER_WINDOW = 5;
-const DEFAULT_CAPS_PER_WAKE = 10;
+const DEFAULT_RECENT_WAKES = 5;
+const DEFAULT_MAX_ACTIONS_PER_WAKE = 10;
 
 export const proactive = <TCustom = unknown>(
   adapter: ProactiveAgentAdapter<TCustom>,
   config: ProactiveConfig<TCustom>,
 ): ProactiveHandle => {
-  if (!config?.model || typeof config.model.generate !== "function") {
+  if (!config?.reflection?.model || typeof config.reflection.model.generate !== "function") {
     throw new Error(
-      "proactive() requires `model` — your own LLM behind the ReasoningModel interface " +
+      "proactive() requires `reflection.model` — your own LLM behind the ReasoningModel interface " +
         "(e.g. anthropicModel(client, ...) from @refix/proactivity/anthropic, " +
         "or langchainModel(chatModel) from @refix/proactivity/langgraph). It powers reflection.",
     );
@@ -74,12 +74,12 @@ export const proactive = <TCustom = unknown>(
     return { min, max, default: Math.min(Math.max(def, min), max) };
   })();
 
-  const perWake = config.caps?.perWake ?? DEFAULT_CAPS_PER_WAKE;
+  const perWake = config.governance?.maxActionsPerWake ?? DEFAULT_MAX_ACTIONS_PER_WAKE;
   // One goal-tick per wake, so the per-pass and per-tick ceilings coincide.
   const caps: GovernanceCaps = { perPass: perWake, perTick: perWake };
 
   const seeds = normalizeGoalSeeds(config.goals);
-  const ledgerWindow = config.ledgerWindow ?? DEFAULT_LEDGER_WINDOW;
+  const recentWakes = config.report?.recentWakes ?? DEFAULT_RECENT_WAKES;
 
   // The heartbeat callback doesn't receive the trigger (it's a tick-row
   // concern), but the report wants to tell the agent "you were woken
@@ -92,8 +92,8 @@ export const proactive = <TCustom = unknown>(
     governance: { store, caps },
     tick: async ({ goals, governance, boundary }) => {
       // --- Wake gate: the only pre-model code, cost control only ---
-      if (config.gate) {
-        const due = await config.gate({
+      if (config.shouldWake) {
+        const due = await config.shouldWake({
           entityId: boundary.entityId,
           now: boundary.startedAt,
           lastWakeAt: boundary.previousTickStartedAt,
@@ -103,12 +103,12 @@ export const proactive = <TCustom = unknown>(
           emit({
             type: "wake_skipped",
             entityId: boundary.entityId,
-            reason: "wake gate declined — the model was not woken",
+            reason: "shouldWake declined — the model was not woken",
           });
           return {
             cadenceHint: {
               nextTickMs: cadence.default,
-              reasoning: "wake gate declined — the model was not woken",
+              reasoning: "shouldWake declined — the model was not woken",
             },
           };
         }
@@ -131,7 +131,7 @@ export const proactive = <TCustom = unknown>(
       });
 
       // --- INJECT: the situation report ---
-      const ledger = await loadLedger(store, boundary.entityId, boundary.tickId, ledgerWindow);
+      const ledger = await loadLedger(store, boundary.entityId, boundary.tickId, recentWakes);
       const contextBase: Omit<WakeContext, "report"> = {
         entityId: boundary.entityId,
         tickId: boundary.tickId,
@@ -172,13 +172,13 @@ export const proactive = <TCustom = unknown>(
             context,
             message: report,
             observe: (event) => emit({ type: "agent_event", entityId: boundary.entityId, event }),
-            ...(config.input ? { custom: config.input(context) } : {}),
+            ...(config.agentInput ? { custom: config.agentInput(context) } : {}),
           }),
       );
 
       // --- REFLECT: bookkeeping + pacing on the dev's model ---
       const reflection = await runReflection({
-        model: config.model,
+        model: config.reflection.model,
         promptContext: {
           context,
           transcript,
@@ -187,9 +187,9 @@ export const proactive = <TCustom = unknown>(
           // (handle.addGoal) are shielded exactly like config-declared ones.
           pinnedGoalIds: pinnedGoalIds(goals),
           cadence: { minMs: cadence.min, maxMs: cadence.max },
-          instructions: config.instructions ?? {},
+          instructions: config.reflection.instructions ?? {},
         },
-        promptOverride: config.prompts?.reflect,
+        promptOverride: config.reflection.prompt,
       });
 
       emit({

@@ -19,7 +19,6 @@ export {
 export { loadLedger, renderReport } from "./report.js";
 export type {
   AgentRunInput,
-  GateContext,
   GoalSeed,
   LedgerWake,
   ProactiveAgentAdapter,
@@ -27,7 +26,10 @@ export type {
   ProactiveEvent,
   ProactiveHandle,
   ReasoningModel,
+  ReflectionConfig,
+  ReflectionInstructions,
   ReflectPromptContext,
+  ShouldWakeContext,
   Transcript,
   TranscriptEvent,
   WakeContext,

@@ -78,19 +78,18 @@ export type EveTickState = {
 
 export type EveProactivityConfig = {
   store: ProactivityStore;
-  // The developer's LLM — powers reflection, exactly as in proactive().
-  model: ReasoningModel;
+  // The SDK's own reasoning step — same shape as proactive()'s `reflection`
+  // (model required; instructions/prompt optional).
+  reflection: ProactiveConfig["reflection"];
   // Eve agents are one-entity processes; name the entity explicitly.
   entityId: string;
   // The defineState slot the developer declared:
   //   export const tickState = defineState<EveTickState | null>("proactivity.tick", () => null);
   state: EveStateSlot<EveTickState>;
   goals?: GoalSeed[];
-  instructions?: ProactiveConfig["instructions"];
-  prompts?: ProactiveConfig["prompts"];
   cadence?: { min?: Duration; max?: Duration; default?: Duration };
-  caps?: { perWake?: number };
-  ledgerWindow?: number;
+  governance?: ProactiveConfig["governance"];
+  report?: ProactiveConfig["report"];
 };
 
 export type EveToolDefinition<TArgs = unknown> = {
@@ -122,11 +121,12 @@ export type EveProactivity = {
   scheduleMarkdown(extra?: string): string;
 };
 
-const DEFAULT_CAPS_PER_WAKE = 10;
-const DEFAULT_LEDGER_WINDOW = 5;
+const DEFAULT_MAX_ACTIONS_PER_WAKE = 10;
+const DEFAULT_RECENT_WAKES = 5;
 
 export const createEveProactivity = (config: EveProactivityConfig): EveProactivity => {
-  const { store, model, entityId, state } = config;
+  const { store, entityId, state } = config;
+  const model = config.reflection.model;
   const cadence: CadenceConfig = (() => {
     const min = parseDuration(config.cadence?.min ?? "15m", "cadence.min");
     const max = parseDuration(config.cadence?.max ?? "24h", "cadence.max");
@@ -134,10 +134,10 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
     if (min > max) throw new Error(`cadence.min (${min}ms) exceeds cadence.max (${max}ms)`);
     return { min, max, default: Math.min(Math.max(def, min), max) };
   })();
-  const perWake = config.caps?.perWake ?? DEFAULT_CAPS_PER_WAKE;
+  const perWake = config.governance?.maxActionsPerWake ?? DEFAULT_MAX_ACTIONS_PER_WAKE;
   const caps: GovernanceCaps = { perPass: perWake, perTick: perWake };
   const seeds = normalizeGoalSeeds(config.goals);
-  const ledgerWindow = config.ledgerWindow ?? DEFAULT_LEDGER_WINDOW;
+  const recentWakes = config.report?.recentWakes ?? DEFAULT_RECENT_WAKES;
 
   // Rebuild the governance envelope from serialized ids + the shared store.
   // The ledger is re-warmed from the store's attempt rows so per-wake caps
@@ -233,7 +233,7 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
             };
           }
           const goals = await store.listGoals(entityId, { status: ["active", "paused"] });
-          const ledger = await loadLedger(store, entityId, tick.tickId, ledgerWindow);
+          const ledger = await loadLedger(store, entityId, tick.tickId, recentWakes);
           const briefing = renderReport({
             entityId,
             tickId: tick.tickId,
@@ -342,9 +342,9 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
               goals,
               pinnedGoalIds: pinnedGoalIds(goals),
               cadence: { minMs: cadence.min, maxMs: cadence.max },
-              instructions: config.instructions ?? {},
+              instructions: config.reflection.instructions ?? {},
             },
-            promptOverride: config.prompts?.reflect,
+            promptOverride: config.reflection.prompt,
           });
 
           if (reflection.goalMutations.length > 0) {

@@ -98,10 +98,10 @@ inside the helper (Anthropic `output_config` json_schema; LangChain
 
 ### Prompts: opinionated defaults, two override layers
 
-- **Append (common):** `instructions: { goals?, scheduling?, ledger? }` —
-  free-text snippets injected into the matching sections of the default
+- **Append (common):** `reflection.instructions: { goals?, scheduling?, ledger? }`
+  — free-text snippets injected into the matching sections of the default
   reflection prompt ("how to think about goals for this product: …").
-- **Replace (rare):** `prompts: { reflect: (ctx) => string }` — full takeover.
+- **Replace (rare):** `reflection.prompt: (ctx) => string` — full takeover.
   The output schema stays enforced either way.
 
 ### Governance is opt-in, per tool
@@ -190,9 +190,9 @@ never allowed to fail a wake.
 
 No briefing sources in the happy path. The agent senses with its own read
 tools, judged by its own model, informed by the scratchpad. The single
-legitimate pre-model hook is the optional wake gate — `gate: (ctx) => boolean`
-— whose only legal question is "is it worth waking the model at all?" (cost
-control), never "here is what matters."
+legitimate pre-model hook is the optional wake gate —
+`shouldWake: (ctx) => boolean` — whose only legal question is "is it worth
+waking the model at all?" (cost control), never "here is what matters."
 
 ## Transcript capture, per framework
 
@@ -229,14 +229,18 @@ import { proactive, memoryStore } from "@refix/proactivity";
 import { fromLangGraph, governed, langchainModel } from "@refix/proactivity/langgraph";
 
 const handle = proactive(fromLangGraph(agent), {
-  model: langchainModel(llm),                      // required — powers reflection
+  reflection: {
+    model: langchainModel(llm),                    // required — the SDK's own reasoning step
+    instructions: { goals: "…", scheduling: "…" }, // appended to the default prompt
+    // prompt: (ctx) => string                     // full prompt takeover (schema still enforced)
+  },
   goals: [{ title, objective, doneCondition, pinned: true }],
-  instructions: { goals: "…", scheduling: "…" },   // appended to defaults
   cadence: { min: "15m", max: "24h" },
   store: memoryStore(),                            // postgres(url) in prod
-  caps: { perWake: 10 },                           // governance ceiling, if any tools are governed
-  gate: async (ctx) => true,                       // optional wake gate (cost control only)
-  input: (ctx) => ({ messages: [...] }),           // optional statefulness dial
+  governance: { maxActionsPerWake: 10 },           // ceiling, if any tools are governed
+  shouldWake: async (ctx) => true,                 // optional wake gate (cost control only)
+  agentInput: (ctx) => ({ messages: [...] }),      // optional statefulness dial
+  report: { recentWakes: 5 },                      // wakes shown verbatim in the report
 });
 
 await handle.start(entityId);   // one loop per entity

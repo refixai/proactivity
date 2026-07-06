@@ -80,7 +80,7 @@ describe("proactive() wake pipeline", () => {
     const { model, prompts } = makeModel(reflection());
 
     const handle = proactive(adapter, {
-      model,
+      reflection: { model },
       store,
       observe: false,
       goals: [
@@ -127,7 +127,7 @@ describe("proactive() wake pipeline", () => {
       reflection(),
     );
 
-    const handle = proactive(adapter, { model, store, observe: false });
+    const handle = proactive(adapter, { reflection: { model }, store, observe: false });
     await handle.wake("e1");
     await handle.wake("e1");
 
@@ -170,7 +170,7 @@ describe("proactive() wake pipeline", () => {
     });
 
     const { model } = makeModel(reflection({ ledgerEntry: "sent two briefs" }));
-    const handle = proactive(adapter, { model, store, observe: false, caps: { perWake: 2 } });
+    const handle = proactive(adapter, { reflection: { model }, store, observe: false, governance: { maxActionsPerWake: 2 } });
     await handle.wake("e1");
 
     // The side effect ran exactly once per distinct target, up to the cap.
@@ -215,7 +215,7 @@ describe("proactive() wake pipeline", () => {
     );
 
     const handle = proactive(adapter, {
-      model,
+      reflection: { model },
       store,
       observe: false,
       goals: [
@@ -253,7 +253,7 @@ describe("proactive() wake pipeline", () => {
       }),
     );
 
-    const handle = proactive(adapter, { model, store, observe: false });
+    const handle = proactive(adapter, { reflection: { model }, store, observe: false });
     await handle.wake("e1");
 
     const goals = await activeGoals(store, "e1");
@@ -265,7 +265,7 @@ describe("proactive() wake pipeline", () => {
     const { adapter } = makeAdapter();
     const { model } = makeModel(new Error("provider 500"));
 
-    const handle = proactive(adapter, { model, store, observe: false, cadence: { min: "10m", max: "2h" } });
+    const handle = proactive(adapter, { reflection: { model }, store, observe: false, cadence: { min: "10m", max: "2h" } });
     await handle.wake("e1");
 
     const tick = (await store.getLatestTick("e1"))!;
@@ -283,7 +283,7 @@ describe("proactive() wake pipeline", () => {
     });
     const { model, prompts } = makeModel(reflection());
 
-    const handle = proactive(adapter, { model, store, observe: false });
+    const handle = proactive(adapter, { reflection: { model }, store, observe: false });
     await handle.wake("e1");
 
     const tick = (await store.getLatestTick("e1"))!;
@@ -299,11 +299,11 @@ describe("proactive() wake pipeline", () => {
     const { model, prompts } = makeModel(reflection());
 
     const handle = proactive(adapter, {
-      model,
+      reflection: { model },
       store,
       observe: false,
       cadence: { min: "5m", max: "1h", default: "10m" },
-      gate: async () => false,
+      shouldWake: async () => false,
     });
     await handle.wake("e1");
 
@@ -312,18 +312,18 @@ describe("proactive() wake pipeline", () => {
     const tick = (await store.getLatestTick("e1"))!;
     expect(tick.status).toBe("completed");
     expect(tick.cadenceHintMs).toBe(10 * 60_000);
-    expect(tick.cadenceReasoning).toContain("wake gate declined");
+    expect(tick.cadenceReasoning).toContain("shouldWake declined");
   });
 
-  test("the input callback shapes what reaches the adapter", async () => {
+  test("the agentInput callback shapes what reaches the adapter", async () => {
     const store = createTestStore();
     const { adapter, calls } = makeAdapter();
     const { model } = makeModel(reflection());
 
     const handle = proactive<{ state: string }>(adapter as ProactiveAgentAdapter<{ state: string }>, {
-      model,
+      reflection: { model },
       store,
-      input: (ctx) => ({ state: `custom for wake ${ctx.tickNumber}` }),
+      agentInput: (ctx) => ({ state: `custom for wake ${ctx.tickNumber}` }),
     });
     await handle.wake("e1");
 
@@ -335,7 +335,7 @@ describe("proactive() wake pipeline", () => {
     const { adapter } = makeAdapter();
     const { model } = makeModel(reflection({ nextWakeMinutes: 1 })); // below min
 
-    const handle = proactive(adapter, { model, store, observe: false, cadence: { min: "15m", max: "24h" } });
+    const handle = proactive(adapter, { reflection: { model }, store, observe: false, cadence: { min: "15m", max: "24h" } });
     await handle.wake("e1");
 
     const tick = (await store.getLatestTick("e1"))!;
@@ -344,7 +344,7 @@ describe("proactive() wake pipeline", () => {
 
   test("proactive() refuses to construct without a model", () => {
     const { adapter } = makeAdapter();
-    expect(() => proactive(adapter, {} as never)).toThrow(/requires `model`/);
+    expect(() => proactive(adapter, {} as never)).toThrow(/requires `reflection.model`/);
   });
 });
 
@@ -458,7 +458,7 @@ describe("observe", () => {
     });
     const { model } = makeModel(reflection({ ledgerEntry: "sent the brief" }));
 
-    const handle = proactive(adapter, { model, store, observe: (e) => events.push(e) });
+    const handle = proactive(adapter, { reflection: { model }, store, observe: (e) => events.push(e) });
     await handle.wake("e1");
 
     expect(events.map((e) => e.type)).toEqual([
@@ -488,9 +488,9 @@ describe("observe", () => {
     const { adapter } = makeAdapter();
     const { model } = makeModel(reflection());
     const handle = proactive(adapter, {
-      model,
+      reflection: { model },
       store: createTestStore(),
-      gate: () => false,
+      shouldWake: () => false,
       observe: (e) => events.push(e),
     });
     await handle.wake("e1");
@@ -503,13 +503,13 @@ describe("observe", () => {
       const { adapter } = makeAdapter();
       const { model } = makeModel(reflection());
 
-      const loud = proactive(adapter, { model, store: createTestStore() });
+      const loud = proactive(adapter, { reflection: { model }, store: createTestStore() });
       await loud.wake("e1");
       const loudLines = log.mock.calls.map((c) => String(c[0]));
       expect(loudLines.some((l) => l.includes("[proactive:e1] wake #1"))).toBe(true);
 
       log.mockClear();
-      const quiet = proactive(adapter, { model, store: createTestStore(), observe: false });
+      const quiet = proactive(adapter, { reflection: { model }, store: createTestStore(), observe: false });
       await quiet.wake("e1");
       expect(log).not.toHaveBeenCalled();
     } finally {
@@ -522,7 +522,7 @@ describe("observe", () => {
     const { adapter } = makeAdapter();
     const { model } = makeModel(reflection());
     const handle = proactive(adapter, {
-      model,
+      reflection: { model },
       store,
       observe: () => {
         throw new Error("observer bug");
