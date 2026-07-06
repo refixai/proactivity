@@ -1,0 +1,321 @@
+// Types for the proactive() wrapper layer — the default door into the SDK.
+// The design contract these types encode: the developer's agent is a black
+// box we brief before, observe during, and learn from after. Nothing here
+// requires restructuring an existing agent.
+
+import type {
+  GoalMutation,
+  GoalPriority,
+  GoalRecord,
+  GoalStatus,
+  GovernanceOutcome,
+  ProactivityStore,
+  SchedulerAdapter,
+  TickTrigger,
+} from "../core/types.js";
+import type { Duration } from "./duration.js";
+
+// --- Transcript: what the adapter observed the agent do ---
+
+// The normalized execution log reflection reads. Adapters map their framework's
+// native trace (LangChain callbacks, Anthropic message threads, Eve self-report)
+// into this shape. Deliberately compact: reflection needs the shape of what
+// happened — which tools ran, with what, what came back, what the agent said —
+// not every token of every intermediate prompt.
+export type TranscriptEvent =
+  | { type: "model"; content: string }
+  | {
+      type: "tool_call";
+      name: string;
+      args: unknown;
+      result?: string;
+      isError?: boolean;
+    };
+
+export type Transcript = {
+  events: TranscriptEvent[];
+  // The agent's final answer/message, when the framework has that concept.
+  finalOutput: string | null;
+};
+
+// --- Observability: the loop narrates itself ---
+
+// Everything the wrapper does is emitted as one flat event stream: wake
+// lifecycle from the runtime, agent activity live from the adapters as they
+// record it, governance outcomes from the envelope, and reflection's verdict.
+// The default observer prints a compact console narration (a background agent
+// whose failure mode is silence must be loud by default); pass your own
+// function to route into a real logger, or `observe: false` to silence.
+export type ProactiveEvent =
+  | {
+      type: "wake_started";
+      entityId: string;
+      tickNumber: number;
+      trigger: TickTrigger;
+      goalCount: number;
+      lastWakeAt: Date | null;
+    }
+  | { type: "wake_skipped"; entityId: string; reason: string }
+  // One agent action, forwarded live while the agent is still running.
+  | { type: "agent_event"; entityId: string; event: TranscriptEvent }
+  | {
+      type: "governance";
+      entityId: string;
+      actionType: string;
+      outcome: GovernanceOutcome;
+      denialReason?: string;
+    }
+  | {
+      type: "reflection";
+      entityId: string;
+      ledgerEntry: string;
+      goalMutations: GoalMutation[];
+      nextWakeMinutes: number;
+      nextWakeReasoning: string;
+      warnings: string[];
+    }
+  | {
+      type: "wake_completed";
+      entityId: string;
+      tickNumber: number;
+      acted: boolean;
+      nextWakeMs: number;
+    }
+  | { type: "wake_failed"; entityId: string; error: unknown };
+
+// --- ReasoningModel: the developer's own LLM, behind a tiny interface ---
+
+// Core has zero runtime dependencies, so it cannot hold a provider SDK or a
+// model string. Reflection instead calls this interface; each adapter subpath
+// ships a one-line helper that wraps the client the developer already has
+// (anthropicModel(client, "..."), langchainModel(chatModel)). `schema` is a
+// JSON Schema object — helpers enforce it provider-side where supported, and
+// reflection re-validates defensively regardless.
+export type ReasoningModel = {
+  generate(prompt: string, schema: Record<string, unknown>): Promise<unknown>;
+};
+
+// --- Wake context: everything the developer may feed their agent ---
+
+// One past wake, rendered for context. Assembled from the tick row, the
+// goal-tick summary (reflection's ledger entry), and the attempt rows — the
+// ledger is a composition of what the engine already writes, not a new table.
+export type LedgerWake = {
+  tickNumber: number;
+  at: Date;
+  trigger: TickTrigger;
+  status: "running" | "completed" | "failed";
+  // Reflection's one-paragraph account of the wake ("briefed 2 changed
+  // tickets; still waiting on a reply from…"). Empty until reflection ran.
+  summary: string;
+  cadenceReasoning: string | null;
+  actions: Array<{
+    actionType: string;
+    target: Record<string, unknown>;
+    outcome: GovernanceOutcome;
+  }>;
+};
+
+// Handed to the `agentInput` callback (and embedded in the default situation
+// report). This is the statefulness dial: the developer decides how much of
+// it reaches their agent — all of it, some of it, or none (stateless).
+export type WakeContext = {
+  entityId: string;
+  tickId: string;
+  tickNumber: number;
+  trigger: TickTrigger;
+  now: Date;
+  lastWakeAt: Date | null;
+  // Active goals; `findings` is the goal's scratchpad (current state / open
+  // threads / next steps), maintained by reflection every wake.
+  goals: GoalRecord[];
+  // Recent past wakes, most recent first.
+  ledger: LedgerWake[];
+  // Rolling AI summary of wakes older than the recent window. Null unless
+  // report.summarizeOlderWakes is on and wakes have aged out of the window.
+  ledgerSummary: string | null;
+  // The rendered situation report — what the agent receives by default when
+  // no `input` callback is configured. Exposed so a custom callback can embed
+  // it instead of rebuilding it.
+  report: string;
+};
+
+// --- Adapter contract: how a framework plugs in ---
+
+export type AgentRunInput<TCustom = unknown> = {
+  context: WakeContext;
+  // The default payload: the situation report, ready to hand to the agent as
+  // a user message. Used when the developer supplied no `agentInput` callback.
+  message: string;
+  // The `agentInput` callback's output, when configured — adapter-specific
+  // shape (a LangGraph state object, an Anthropic message list, …).
+  custom?: TCustom;
+  // Live transcript feed: adapters call this as they record each event, so
+  // the observer narrates DURING the run, not after it. Optional — an adapter
+  // that can't stream (Eve's self-report) simply never calls it, and the
+  // returned Transcript remains the source of truth for reflection.
+  observe?: (event: TranscriptEvent) => void;
+};
+
+// Deliberately small — three concerns, nothing else — which is what makes
+// "works with all frameworks" realistic. run() executes the developer's
+// UNCHANGED agent once and returns the normalized transcript.
+export type ProactiveAgentAdapter<TCustom = unknown> = {
+  // Shows up in errors and the ledger ("langgraph", "anthropic-loop", …).
+  name: string;
+  run(input: AgentRunInput<TCustom>): Promise<Transcript>;
+};
+
+// --- Config ---
+
+// A developer-declared standing goal. Seeded idempotently on the first wake
+// (stable ids make re-seeding a no-op across restarts). Pinned goals can't be
+// completed/paused/archived by reflection — only their scratchpad evolves.
+export type GoalSeed = {
+  // Stable identifier; derived from the title when omitted.
+  id?: string;
+  title: string;
+  objective: string;
+  doneCondition: string;
+  priority?: GoalPriority;
+  pinned?: boolean;
+};
+
+// The wake gate: the ONLY pre-model code path, and its only legal question is
+// "is it worth waking the model at all?" (cost control). It must never answer
+// "here's what matters" — that judgment belongs to the agent. Return false to
+// skip the wake; the tick is still recorded and cadence backs off.
+export type ShouldWakeContext = {
+  entityId: string;
+  now: Date;
+  lastWakeAt: Date | null;
+  goals: GoalRecord[];
+};
+
+// Free-text guidance appended into the matching sections of the default
+// reflection prompt ("how to think about goals for this product: …").
+export type ReflectionInstructions = {
+  goals?: string;
+  scheduling?: string;
+  ledger?: string;
+};
+
+// What reflection.run receives — everything the default single-call step
+// uses, plus the store (so deep reflection can read further back than the
+// prompt carries: older ticks, attempts, other goals).
+export type ReflectionRunContext = ReflectPromptContext & {
+  store: ProactivityStore;
+  // The default prompt, prebuilt for this wake (honors reflection.prompt) —
+  // embed it in your own flow or ignore it.
+  defaultPrompt: string;
+  // The output schema the return value must satisfy (REFLECT_OUTPUT_SCHEMA).
+  schema: Record<string, unknown>;
+};
+
+// Everything reflection-related lives under one key: reflection is the SDK's
+// own reasoning step (bookkeeping + pacing after each wake), and grouping it
+// keeps `model` from reading as "the model my agent runs on" — it isn't; the
+// agent is a black box with its own.
+export type ReflectionConfig = {
+  // The developer's own LLM behind the ReasoningModel interface. Required:
+  // reflection is always on, and this is the one parameter it needs.
+  model: ReasoningModel;
+  instructions?: ReflectionInstructions;
+  // Full prompt takeover for the rare case appending isn't enough. The output
+  // schema stays enforced either way.
+  prompt?: (ctx: ReflectPromptContext) => string;
+  // Full STEP takeover — the deep-reasoning hatch. Compute the verdict with
+  // whatever machinery you want (one call, a sub-agent over the store, an
+  // every-Nth-wake deep pass) and return something schema-shaped. The SDK
+  // still validates, clamps the cadence, and shields pinned goals; a throw
+  // degrades to defaults exactly like a failed model call. Takes precedence
+  // over `prompt` (which still shapes ctx.defaultPrompt).
+  run?: (ctx: ReflectionRunContext) => Promise<unknown>;
+};
+
+export type ProactiveConfig<TCustom = unknown> = {
+  reflection: ReflectionConfig;
+  goals?: GoalSeed[];
+  cadence?: {
+    min?: Duration;
+    max?: Duration;
+    // First wake after start(); defaults to min.
+    default?: Duration;
+  };
+  // Defaults to the in-memory store — swap for createPostgresStore in prod.
+  store?: ProactivityStore;
+  // Defaults to the in-process timer adapter — swap for BullMQ in prod.
+  schedule?: SchedulerAdapter;
+  governance?: {
+    // Ceiling on governed actions that may RUN per wake (further dispatches
+    // are hard-denied). Applies when any tools are governed(). Default 10.
+    maxActionsPerWake?: number;
+  };
+  shouldWake?: (ctx: ShouldWakeContext) => boolean | Promise<boolean>;
+  // The statefulness dial: shape exactly what reaches the agent each wake.
+  // Omit it and the rendered situation report arrives as the user message;
+  // set it and your return value is handed to the adapter instead (the
+  // rendered report is still available as ctx.report to embed).
+  agentInput?: (ctx: WakeContext) => TCustom;
+  report?: {
+    // How many past wakes the situation report includes verbatim. Default 5.
+    recentWakes?: number;
+    // Long-term memory: after each wake, fold wakes that aged out of the
+    // recent window into a rolling AI summary (one extra reflection-model
+    // call per wake once history exceeds the window). The report gains an
+    // "Older wakes" section, so wake #500 still knows what wake #3 promised.
+    summarizeOlderWakes?: boolean;
+  };
+  // Live narration of the loop. Omit for the built-in console narrator; pass
+  // a function to route events into your own logger; `false` to silence. An
+  // observer that throws is swallowed — it can never break a wake.
+  observe?: ((event: ProactiveEvent) => void) | false;
+  // Infra errors from background scheduled wakes (the tick itself records its
+  // own failures via the store). Defaults to console.error.
+  onError?: (error: unknown, entityId: string) => void;
+};
+
+// What a full-override reflect prompt receives — everything the default
+// prompt builder uses.
+export type ReflectPromptContext = {
+  context: WakeContext;
+  transcript: Transcript;
+  goals: GoalRecord[];
+  pinnedGoalIds: string[];
+  cadence: { minMs: number; maxMs: number };
+  instructions: ReflectionInstructions;
+};
+
+// --- Handle ---
+
+export type AddGoalOptions = {
+  // Also wake the entity immediately so the new goal gets looked at now
+  // (same semantics as handle.wake() — it will not resurrect a stopped loop's
+  // schedule beyond this one look).
+  wake?: boolean;
+};
+
+export type ProactiveHandle = {
+  // Begin the loop for an entity. One loop per entity; the first wake fires
+  // after cadence.default.
+  start(entityId: string): Promise<void>;
+  // Halt the loop. Authoritative across replicas (flips `enabled` in the store).
+  stop(entityId: string): Promise<void>;
+  // Wake now — the webhook/event entry point. Does not resurrect a stopped
+  // entity, and the wake's reflection re-arms the next scheduled one.
+  wake(entityId: string): Promise<void>;
+  // Re-arm every entity the store says should be running — call once after a
+  // process restart when using a durable store.
+  resume(): Promise<void>;
+  // Runtime goal management — the "my user clicked watch-this" API. addGoal
+  // is idempotent on the goal id (explicit or slugified from the title) and
+  // may create pinned goals; completeGoal works on pinned goals too (the
+  // pinned shield binds reflection, not you) and throws on unknown or
+  // already-terminal goals.
+  addGoal(entityId: string, goal: GoalSeed, opts?: AddGoalOptions): Promise<GoalRecord>;
+  completeGoal(entityId: string, goalId: string, reason?: string): Promise<void>;
+  listGoals(entityId: string, filter?: { status?: GoalStatus[] }): Promise<GoalRecord[]>;
+  // The store, exposed for power users (dashboards, custom queries). Same
+  // engine the primitives use — ejecting is not a migration.
+  store: ProactivityStore;
+};

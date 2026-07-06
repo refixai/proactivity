@@ -26,6 +26,23 @@ describe("createTestStore", () => {
     expect((await store.getState("e1"))!.enabled).toBe(false);
   });
 
+  test("upsertState round-trips the ledger summary fields", async () => {
+    const store = makeStore();
+    await store.upsertState("e1", { enabled: true });
+    expect((await store.getState("e1"))!.ledgerSummary).toBeNull();
+
+    await store.upsertState("e1", {
+      ledgerSummary: "Wakes 1-3: watched two tickets, briefed once.",
+      ledgerSummaryThroughTick: 3,
+    });
+    const state = (await store.getState("e1"))!;
+    expect(state.ledgerSummary).toContain("briefed once");
+    expect(state.ledgerSummaryThroughTick).toBe(3);
+    // Unrelated patches must not clobber the summary.
+    await store.upsertState("e1", { lastTickAt: new Date() });
+    expect((await store.getState("e1"))!.ledgerSummaryThroughTick).toBe(3);
+  });
+
   // --- Ticks ---
 
   test("insertTick and getLatestTick round-trip", async () => {
@@ -95,7 +112,7 @@ describe("createTestStore", () => {
       },
     ];
 
-    await store.applyGoalMutations(tickId, mutations);
+    await store.applyGoalMutations("e1", mutations);
     const goals = await store.listGoals("e1");
     expect(goals).toHaveLength(1);
     expect(goals[0].title).toBe("Increase engagement");
@@ -106,7 +123,7 @@ describe("createTestStore", () => {
     const store = makeStore();
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       {
         op: "create",
         title: "Test goal",
@@ -119,18 +136,18 @@ describe("createTestStore", () => {
 
     const [goal] = await store.listGoals("e1");
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "update", goalId: goal.id, findings: "new finding", reasoning: "learned something" },
     ]);
     const updated = (await store.getGoal(goal.id))!;
     expect(updated.findings).toBe("new finding");
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "complete", goalId: goal.id, reasoning: "done condition met" },
     ]);
     expect((await store.getGoal(goal.id))!.status).toBe("completed");
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "archive", goalId: goal.id, reasoning: "cleaning up" },
     ]);
     expect((await store.getGoal(goal.id))!.status).toBe("archived");
@@ -140,30 +157,59 @@ describe("createTestStore", () => {
     const store = makeStore();
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "create", goalId: "g1", title: "T", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ]);
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "pause", goalId: "g1", reasoning: "waiting on user" },
     ]);
     expect((await store.getGoal("g1"))!.status).toBe("paused");
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "update", goalId: "g1", status: "active", reasoning: "user replied" },
     ]);
     expect((await store.getGoal("g1"))!.status).toBe("active");
+  });
+
+  test("listTicksInRange returns the window oldest-first, bounded", async () => {
+    const store = makeStore();
+    for (let i = 0; i < 6; i++) {
+      await store.insertTick({ entityId: "e1", trigger: "scheduled", dryRun: false });
+    }
+    await store.insertTick({ entityId: "e2", trigger: "scheduled", dryRun: false });
+
+    const range = await store.listTicksInRange("e1", { afterTick: 1, throughTick: 4, limit: 10 });
+    expect(range.map((t) => t.tickNumber)).toEqual([2, 3, 4]);
+
+    const capped = await store.listTicksInRange("e1", { afterTick: 0, throughTick: 6, limit: 2 });
+    expect(capped.map((t) => t.tickNumber)).toEqual([1, 2]);
+  });
+
+  test("pinned persists on create and is updatable", async () => {
+    const store = makeStore();
+    await store.applyGoalMutations("e1", [
+      { op: "create", goalId: "g-pin", title: "Standing", objective: "o", doneCondition: "d", pinned: true, reasoning: "seed" },
+      { op: "create", goalId: "g-plain", title: "Normal", objective: "o", doneCondition: "d", reasoning: "seed" },
+    ]);
+    expect((await store.getGoal("g-pin"))!.pinned).toBe(true);
+    expect((await store.getGoal("g-plain"))!.pinned).toBe(false);
+
+    await store.applyGoalMutations("e1", [
+      { op: "update", goalId: "g-pin", pinned: false, reasoning: "config unpinned it" },
+    ]);
+    expect((await store.getGoal("g-pin"))!.pinned).toBe(false);
   });
 
   test("applyGoalMutations can't mutate another entity's goal", async () => {
     const store = makeStore();
     // e1 owns a goal; e2's tick tries to archive it by id.
     const { tickId: t1 } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
-    await store.applyGoalMutations(t1, [
+    await store.applyGoalMutations("e1", [
       { op: "create", goalId: "g-e1", title: "e1 goal", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ]);
 
     const { tickId: t2 } = await store.insertTick({ entityId: "e2", trigger: "manual", dryRun: false });
-    await store.applyGoalMutations(t2, [
+    await store.applyGoalMutations("e2", [
       { op: "archive", goalId: "g-e1", reasoning: "cross-entity attempt" },
     ]);
 
@@ -174,13 +220,13 @@ describe("createTestStore", () => {
     const store = makeStore();
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "create", title: "Active goal", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
       { op: "create", title: "Will archive", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ]);
 
     const goals = await store.listGoals("e1");
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "archive", goalId: goals[1].id, reasoning: "stale" },
     ]);
 
@@ -195,7 +241,7 @@ describe("createTestStore", () => {
     const store = makeStore();
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "create", title: "G", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ]);
     const [goal] = await store.listGoals("e1");

@@ -16,8 +16,8 @@ const makeHeartbeat = (tickFn: Parameters<typeof createHeartbeat>[0]["tick"]) =>
   })};
 };
 
-const seedGoalAndGoalTick = async (store: ProactivityStore, tickId: string, goalId: string) => {
-  await store.applyGoalMutations(tickId, [
+const seedGoalAndGoalTick = async (store: ProactivityStore, entityId: string, tickId: string, goalId: string) => {
+  await store.applyGoalMutations(entityId, [
     { op: "create", goalId, title: "Test goal", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
   ]);
   const goalTickId = await store.insertGoalTick({ goalId, tickId, orderIndex: 0 });
@@ -54,7 +54,7 @@ describe("integration patterns", () => {
       expect(typeof prompt).toBe("string");
       expect(prompt).toContain("crm");
 
-      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-lang");
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.entityId, ctx.boundary.tickId, "g-lang");
       const tool = makeGovernedTool(ctx.governance, "g-lang", goalTickId);
       const outcome = await tool.func({ userId: "u1", body: "hello" });
       expect(outcome).toBe("taken");
@@ -90,7 +90,7 @@ describe("integration patterns", () => {
       });
       expect(prompt.length).toBeGreaterThan(100);
 
-      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-anthropic");
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.entityId, ctx.boundary.tickId, "g-anthropic");
 
       const results: DispatchResult[] = [];
       for (const action of simulatedLlmResponse.actions) {
@@ -126,7 +126,7 @@ describe("integration patterns", () => {
         tickNumber: ctx.boundary.tickNumber,
       });
 
-      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-vercel");
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.entityId, ctx.boundary.tickId, "g-vercel");
 
       const toolExecute = async (args: { userId: string; message: string }) => {
         const result = await ctx.governance.dispatch({
@@ -170,7 +170,7 @@ describe("integration patterns", () => {
       expect(prompt).toContain("Mastra agent");
       expect(prompt).toContain("Additional instructions");
 
-      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-mastra");
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.entityId, ctx.boundary.tickId, "g-mastra");
 
       const r = await ctx.governance.dispatch({
         goalId: "g-mastra",
@@ -225,7 +225,7 @@ describe("integration patterns", () => {
     };
 
     const { store, heartbeat } = makeHeartbeat(async (ctx) => {
-      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-eve");
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.entityId, ctx.boundary.tickId, "g-eve");
 
       // The tick opens the ALS scope, then runs the Eve session (a POST to
       // /eve/v1/session). The tool executes inside that scope, so getStore()
@@ -250,7 +250,7 @@ describe("integration patterns", () => {
     const performed: string[] = [];
 
     const { store, heartbeat } = makeHeartbeat(async (ctx) => {
-      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-caps");
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.entityId, ctx.boundary.tickId, "g-caps");
 
       const results: DispatchResult[] = [];
       for (let i = 0; i < 5; i++) {
@@ -284,7 +284,7 @@ describe("integration patterns", () => {
     const performed: string[] = [];
 
     const { store, heartbeat } = makeHeartbeat(async (ctx) => {
-      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.tickId, "g-idemp");
+      const goalTickId = await seedGoalAndGoalTick(store, ctx.boundary.entityId, ctx.boundary.tickId, "g-idemp");
 
       const r1 = await ctx.governance.dispatch({
         goalId: "g-idemp",

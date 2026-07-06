@@ -5,12 +5,28 @@ import type { GoalMutation, InsertAttempt } from "../core/types.js";
 
 const CONNECTION_STRING = "postgresql://refix:refix-password@localhost:5432/proactivity_test";
 
+// Integration suite: needs a local Postgres. Probe once at collection time and
+// skip cleanly when it's absent — a missing database must read as "skipped",
+// not as a failing file that turns the whole suite red.
+const pgAvailable = await (async () => {
+  const probe = new pg.Pool({ connectionString: CONNECTION_STRING, connectionTimeoutMillis: 1500 });
+  try {
+    await probe.query("SELECT 1");
+    return true;
+  } catch {
+    console.warn("[postgres/index.test] no local Postgres at localhost:5432 — skipping integration suite");
+    return false;
+  } finally {
+    await probe.end().catch(() => {});
+  }
+})();
+
 const pool = new pg.Pool({ connectionString: CONNECTION_STRING });
 
 const makeStore = () => createPostgresStore({ pool });
 
 const seedGoalAndGoalTick = async (store: ReturnType<typeof makeStore>, entityId: string, tickId: string) => {
-  await store.applyGoalMutations(tickId, [
+  await store.applyGoalMutations(entityId, [
     { op: "create", goalId: `goal-${tickId}`, title: "G", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
   ]);
   const gtId = await store.insertGoalTick({ goalId: `goal-${tickId}`, tickId, orderIndex: 0 });
@@ -18,11 +34,13 @@ const seedGoalAndGoalTick = async (store: ReturnType<typeof makeStore>, entityId
 };
 
 beforeAll(async () => {
+  if (!pgAvailable) return;
   const store = makeStore();
   await store.migrate();
 });
 
 beforeEach(async () => {
+  if (!pgAvailable) return;
   // Clean tables in dependency order
   await pool.query("DELETE FROM proactivity_attempts");
   await pool.query("DELETE FROM proactivity_goal_ticks");
@@ -35,7 +53,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe("createPostgresStore", () => {
+describe.skipIf(!pgAvailable)("createPostgresStore", () => {
   test("end() leaves a caller-owned pool open but closes an SDK-created one", async () => {
     // Borrowed pool: end() must be a no-op so the caller's pool keeps working.
     await createPostgresStore({ pool }).end();
@@ -139,7 +157,7 @@ describe("createPostgresStore", () => {
       },
     ];
 
-    await store.applyGoalMutations(tickId, mutations);
+    await store.applyGoalMutations("e1", mutations);
     const goals = await store.listGoals("e1");
     expect(goals).toHaveLength(1);
     expect(goals[0].title).toBe("Increase engagement");
@@ -158,7 +176,7 @@ describe("createPostgresStore", () => {
       { op: "create", goalId: "g-rollback", title: "B", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ];
 
-    await expect(store.applyGoalMutations(tickId, mutations)).rejects.toThrow();
+    await expect(store.applyGoalMutations("e1", mutations)).rejects.toThrow();
 
     const goals = await store.listGoals("e1");
     expect(goals).toHaveLength(0);
@@ -169,33 +187,33 @@ describe("createPostgresStore", () => {
     await store.upsertState("e1", { enabled: true });
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "create", title: "Test goal", objective: "obj", doneCondition: "done", findings: "", reasoning: "test" },
     ]);
 
     const [goal] = await store.listGoals("e1");
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "update", goalId: goal.id, findings: "new finding", reasoning: "learned something" },
     ]);
     expect((await store.getGoal(goal.id))!.findings).toBe("new finding");
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "pause", goalId: goal.id, reasoning: "waiting on user" },
     ]);
     expect((await store.getGoal(goal.id))!.status).toBe("paused");
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "update", goalId: goal.id, status: "active", reasoning: "user replied" },
     ]);
     expect((await store.getGoal(goal.id))!.status).toBe("active");
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "complete", goalId: goal.id, reasoning: "done condition met" },
     ]);
     expect((await store.getGoal(goal.id))!.status).toBe("completed");
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "archive", goalId: goal.id, reasoning: "cleaning up" },
     ]);
     expect((await store.getGoal(goal.id))!.status).toBe("archived");
@@ -207,13 +225,13 @@ describe("createPostgresStore", () => {
     await store.upsertState("e2", { enabled: true });
 
     const { tickId: t1 } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
-    await store.applyGoalMutations(t1, [
+    await store.applyGoalMutations("e1", [
       { op: "create", goalId: "g-e1", title: "e1 goal", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ]);
 
     // e2's tick tries to archive e1's goal by id; the entity_id scope must no-op it.
     const { tickId: t2 } = await store.insertTick({ entityId: "e2", trigger: "manual", dryRun: false });
-    await store.applyGoalMutations(t2, [
+    await store.applyGoalMutations("e2", [
       { op: "archive", goalId: "g-e1", reasoning: "cross-entity attempt" },
     ]);
 
@@ -225,19 +243,55 @@ describe("createPostgresStore", () => {
     await store.upsertState("e1", { enabled: true });
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "create", title: "Active goal", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
       { op: "create", title: "Will archive", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ]);
 
     const goals = await store.listGoals("e1");
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "archive", goalId: goals[1].id, reasoning: "stale" },
     ]);
 
     const active = await store.listGoals("e1", { status: ["active"] });
     expect(active).toHaveLength(1);
     expect(active[0].title).toBe("Active goal");
+  });
+
+  test("pinned persists on create and is updatable", async () => {
+    const store = makeStore();
+    await store.upsertState("e1", { enabled: true });
+    await store.applyGoalMutations("e1", [
+      { op: "create", goalId: "g-pin-pg", title: "Standing", objective: "o", doneCondition: "d", pinned: true, reasoning: "seed" },
+    ]);
+    expect((await store.getGoal("g-pin-pg"))!.pinned).toBe(true);
+
+    await store.applyGoalMutations("e1", [
+      { op: "update", goalId: "g-pin-pg", pinned: false, reasoning: "config unpinned it" },
+    ]);
+    expect((await store.getGoal("g-pin-pg"))!.pinned).toBe(false);
+  });
+
+  test("listTicksInRange returns the window oldest-first, bounded", async () => {
+    const store = makeStore();
+    await store.upsertState("e-range", { enabled: true });
+    for (let i = 0; i < 5; i++) {
+      await store.insertTick({ entityId: "e-range", trigger: "scheduled", dryRun: false });
+    }
+    const range = await store.listTicksInRange("e-range", { afterTick: 1, throughTick: 4, limit: 10 });
+    expect(range.map((t) => t.tickNumber)).toEqual([2, 3, 4]);
+
+    const capped = await store.listTicksInRange("e-range", { afterTick: 0, throughTick: 5, limit: 2 });
+    expect(capped.map((t) => t.tickNumber)).toEqual([1, 2]);
+  });
+
+  test("ledger summary fields round-trip via upsertState", async () => {
+    const store = makeStore();
+    await store.upsertState("e-sum", { enabled: true });
+    await store.upsertState("e-sum", { ledgerSummary: "epoch summary", ledgerSummaryThroughTick: 7 });
+    const state = (await store.getState("e-sum"))!;
+    expect(state.ledgerSummary).toBe("epoch summary");
+    expect(state.ledgerSummaryThroughTick).toBe(7);
   });
 
   // --- Goal Ticks ---
@@ -247,7 +301,7 @@ describe("createPostgresStore", () => {
     await store.upsertState("e1", { enabled: true });
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
 
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "create", title: "G", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ]);
     const [goal] = await store.listGoals("e1");
@@ -389,7 +443,7 @@ describe("createPostgresStore", () => {
       tick: async (ctx) => {
         expect(ctx.briefing.crm).toEqual({ lead: "Alice" });
 
-        await store.applyGoalMutations(ctx.boundary.tickId, [
+        await store.applyGoalMutations(ctx.boundary.entityId, [
           { op: "create", goalId: "g-alice", title: "Engage Alice", objective: "Send intro", doneCondition: "Reply", findings: "", reasoning: "New lead" },
         ]);
         const gtId = await store.insertGoalTick({ goalId: "g-alice", tickId: ctx.boundary.tickId, orderIndex: 0 });

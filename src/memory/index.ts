@@ -3,6 +3,7 @@ import type {
   EntityState,
   GoalMutation,
   GoalRecord,
+  GoalTickRecord,
   InsertAttempt,
   InsertAttemptResult,
   InsertGoalTick,
@@ -19,7 +20,7 @@ export const createTestStore = (): ProactivityStore => {
   const entities = new Map<string, EntityState>();
   const ticks = new Map<string, TickRecord>();
   const goals = new Map<string, GoalRecord>();
-  const goalTicks = new Map<string, { goalId: string; tickId: string; orderIndex: number; acted: boolean; summary: string }>();
+  const goalTicks = new Map<string, Omit<GoalTickRecord, "id">>();
   const attempts = new Map<string, ActionAttempt>();
   const idempotencyIndex = new Map<string, string>();
 
@@ -40,6 +41,8 @@ export const createTestStore = (): ProactivityStore => {
           enabled: true,
           lastTickAt: null,
           nextScheduledTickAt: null,
+          ledgerSummary: null,
+          ledgerSummaryThroughTick: null,
           ...patch,
         });
       }
@@ -99,6 +102,25 @@ export const createTestStore = (): ProactivityStore => {
       return prev?.startedAt ?? null;
     },
 
+    async listRecentTicks(entityId, opts) {
+      return [...ticks.values()]
+        .filter((t) => t.entityId === entityId)
+        .sort((a, b) => b.tickNumber - a.tickNumber)
+        .slice(0, opts.limit);
+    },
+
+    async listTicksInRange(entityId, opts) {
+      return [...ticks.values()]
+        .filter(
+          (t) =>
+            t.entityId === entityId &&
+            t.tickNumber > opts.afterTick &&
+            t.tickNumber <= opts.throughTick,
+        )
+        .sort((a, b) => a.tickNumber - b.tickNumber)
+        .slice(0, opts.limit);
+    },
+
     // --- Goals ---
 
     async listGoals(entityId, filter) {
@@ -115,9 +137,7 @@ export const createTestStore = (): ProactivityStore => {
       return goals.get(goalId) ?? null;
     },
 
-    async applyGoalMutations(tickId, mutations: GoalMutation[]) {
-      const tick = ticks.get(tickId);
-      const entityId = tick?.entityId ?? "unknown";
+    async applyGoalMutations(entityId, mutations: GoalMutation[]) {
       const now = new Date();
 
       for (const m of mutations) {
@@ -134,6 +154,7 @@ export const createTestStore = (): ProactivityStore => {
             creationReasoning: m.reasoning,
             status: "active",
             priority: m.priority ?? "medium",
+            pinned: m.pinned ?? false,
             lastWorkedAt: null,
             createdAt: now,
             updatedAt: now,
@@ -153,6 +174,7 @@ export const createTestStore = (): ProactivityStore => {
             if (m.nextActions !== undefined) patch.nextActions = m.nextActions;
             if (m.priority !== undefined) patch.priority = m.priority;
             if (m.status !== undefined) patch.status = m.status;
+            if (m.pinned !== undefined) patch.pinned = m.pinned;
           } else if (m.op === "reprioritize") {
             if (m.priority !== undefined) patch.priority = m.priority;
           } else if (m.op === "complete") {
@@ -178,6 +200,13 @@ export const createTestStore = (): ProactivityStore => {
       const gt = goalTicks.get(goalTickId);
       if (!gt) return;
       goalTicks.set(goalTickId, { ...gt, ...patch });
+    },
+
+    async listGoalTicks(tickId) {
+      return [...goalTicks.entries()]
+        .filter(([, gt]) => gt.tickId === tickId)
+        .map(([gtId, gt]) => ({ id: gtId, ...gt }))
+        .sort((a, b) => a.orderIndex - b.orderIndex);
     },
 
     // --- Attempts ---

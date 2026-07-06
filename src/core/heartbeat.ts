@@ -124,7 +124,7 @@ export const createPlanActHeartbeat = (config: PlanActConfig): Heartbeat => {
           if (mutationErrors.length > 0) {
             throw new Error(`Invalid goal mutations from planner: ${mutationErrors.join("; ")}`);
           }
-          await store.applyGoalMutations(tickId, plan.goalMutations);
+          await store.applyGoalMutations(entityId, plan.goalMutations);
         }
 
         const ledger = createLedger();
