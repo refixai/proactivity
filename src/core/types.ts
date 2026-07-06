@@ -93,6 +93,11 @@ export type GoalRecord = {
   creationReasoning: string;
   status: GoalStatus;
   priority: GoalPriority;
+  // A pinned goal is a standing mission: reflection may evolve its scratchpad
+  // but never complete/pause/archive it. Persisted on the record (not derived
+  // from config) so goals added at runtime keep their pinnedness across
+  // restarts.
+  pinned: boolean;
   lastWorkedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -110,6 +115,9 @@ export type GoalMutation = {
   // update only: the resume/pause path (paused → active and back). Terminal
   // states are reached through the complete/archive ops, never by update.
   status?: "active" | "paused";
+  // create/update only, and never accepted from reflection output — pinning is
+  // the developer's call (config seeds, handle.addGoal), not the model's.
+  pinned?: boolean;
   reasoning: string;
 };
 
@@ -228,6 +236,11 @@ export type EntityState = {
   enabled: boolean;
   lastTickAt: Date | null;
   nextScheduledTickAt: Date | null;
+  // Rolling AI summary of wakes older than the report window (opt-in via
+  // report.summarizeOlderWakes). `ledgerSummaryThroughTick` marks the highest
+  // tick number the summary covers, so folding is incremental and resumable.
+  ledgerSummary: string | null;
+  ledgerSummaryThroughTick: number | null;
 };
 
 // --- Storage ---
@@ -252,14 +265,23 @@ export type ProactivityStore = {
     entityId: string,
     opts: { limit: number },
   ): Promise<TickRecord[]>;
+  // Range read for ledger compaction: ticks with afterTick < tickNumber <=
+  // throughTick, OLDEST first, at most `limit` — old wakes are reachable
+  // without paging through the whole history.
+  listTicksInRange(
+    entityId: string,
+    opts: { afterTick: number; throughTick: number; limit: number },
+  ): Promise<TickRecord[]>;
 
   listGoals(
     entityId: string,
     filter?: { status?: GoalStatus[] },
   ): Promise<GoalRecord[]>;
   getGoal(goalId: string): Promise<GoalRecord | null>;
+  // Keyed by entity (not tick) so goals can be mutated outside a wake too —
+  // handle.addGoal()/completeGoal() are ordinary mutations, not special cases.
   applyGoalMutations(
-    tickId: string,
+    entityId: string,
     mutations: GoalMutation[],
   ): Promise<void>;
   insertGoalTick(entry: InsertGoalTick): Promise<string>;

@@ -240,6 +240,9 @@ export const parseReflectOutput = (
       continue;
     }
 
+    // Note what is NOT copied: `pinned`. Pinning is the developer's call
+    // (config seeds, handle.addGoal) — reflection output can never pin or
+    // unpin a goal, or the shield below would be one update away from moot.
     const mutation: GoalMutation = {
       op: op as GoalMutation["op"],
       reasoning: asOptionalString(m.reasoning)?.trim() || "(no reasoning given)",

@@ -24,34 +24,40 @@ const slugify = (title: string): string =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 64) || "goal";
 
-export type NormalizedSeeds = {
-  seeds: Array<GoalSeed & { id: string }>;
-  pinnedGoalIds: string[];
-};
-
-export const normalizeGoalSeeds = (goals?: GoalSeed[]): NormalizedSeeds => {
-  const seeds = (goals?.length ? goals : [FALLBACK_GOAL]).map((seed) => ({
+export const normalizeGoalSeeds = (goals?: GoalSeed[]): Array<GoalSeed & { id: string }> =>
+  (goals?.length ? goals : [FALLBACK_GOAL]).map((seed) => ({
     ...seed,
     id: seed.id ?? slugify(seed.title),
   }));
-  return { seeds, pinnedGoalIds: seeds.filter((s) => s.pinned).map((s) => s.id) };
-};
 
 // Create whichever declared goals don't exist yet (idempotent on stable ids),
+// reconcile pinnedness when the config changed it (pinned lives on the record
+// so runtime-added goals keep it — declared seeds stay the config's call),
 // then return the entity's live active+paused portfolio.
 export const ensureSeededGoals = async (
   store: ProactivityStore,
-  tickId: string,
   entityId: string,
-  seeds: NormalizedSeeds["seeds"],
+  seeds: Array<GoalSeed & { id: string }>,
 ): Promise<GoalRecord[]> => {
   const missing = [];
   for (const seed of seeds) {
-    if (!(await store.getGoal(seed.id))) missing.push(seed);
+    const existing = await store.getGoal(seed.id);
+    if (!existing) {
+      missing.push(seed);
+    } else if (existing.pinned !== (seed.pinned ?? false)) {
+      await store.applyGoalMutations(entityId, [
+        {
+          op: "update",
+          goalId: seed.id,
+          pinned: seed.pinned ?? false,
+          reasoning: "Pinnedness changed in proactivity config",
+        },
+      ]);
+    }
   }
   if (missing.length > 0) {
     await store.applyGoalMutations(
-      tickId,
+      entityId,
       missing.map((seed) => ({
         op: "create" as const,
         goalId: seed.id,
@@ -59,12 +65,18 @@ export const ensureSeededGoals = async (
         objective: seed.objective,
         doneCondition: seed.doneCondition,
         priority: seed.priority,
+        pinned: seed.pinned ?? false,
         reasoning: "Declared in proactivity config",
       })),
     );
   }
   return store.listGoals(entityId, { status: ["active", "paused"] });
 };
+
+// The ids reflection must treat as untouchable, derived from the live
+// portfolio (not the config) so runtime-added pinned goals are shielded too.
+export const pinnedGoalIds = (goals: GoalRecord[]): string[] =>
+  goals.filter((g) => g.pinned).map((g) => g.id);
 
 const PRIORITY_RANK: Record<GoalRecord["priority"], number> = {
   critical: 0,

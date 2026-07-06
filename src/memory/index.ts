@@ -41,6 +41,8 @@ export const createTestStore = (): ProactivityStore => {
           enabled: true,
           lastTickAt: null,
           nextScheduledTickAt: null,
+          ledgerSummary: null,
+          ledgerSummaryThroughTick: null,
           ...patch,
         });
       }
@@ -107,6 +109,18 @@ export const createTestStore = (): ProactivityStore => {
         .slice(0, opts.limit);
     },
 
+    async listTicksInRange(entityId, opts) {
+      return [...ticks.values()]
+        .filter(
+          (t) =>
+            t.entityId === entityId &&
+            t.tickNumber > opts.afterTick &&
+            t.tickNumber <= opts.throughTick,
+        )
+        .sort((a, b) => a.tickNumber - b.tickNumber)
+        .slice(0, opts.limit);
+    },
+
     // --- Goals ---
 
     async listGoals(entityId, filter) {
@@ -123,9 +137,7 @@ export const createTestStore = (): ProactivityStore => {
       return goals.get(goalId) ?? null;
     },
 
-    async applyGoalMutations(tickId, mutations: GoalMutation[]) {
-      const tick = ticks.get(tickId);
-      const entityId = tick?.entityId ?? "unknown";
+    async applyGoalMutations(entityId, mutations: GoalMutation[]) {
       const now = new Date();
 
       for (const m of mutations) {
@@ -142,6 +154,7 @@ export const createTestStore = (): ProactivityStore => {
             creationReasoning: m.reasoning,
             status: "active",
             priority: m.priority ?? "medium",
+            pinned: m.pinned ?? false,
             lastWorkedAt: null,
             createdAt: now,
             updatedAt: now,
@@ -161,6 +174,7 @@ export const createTestStore = (): ProactivityStore => {
             if (m.nextActions !== undefined) patch.nextActions = m.nextActions;
             if (m.priority !== undefined) patch.priority = m.priority;
             if (m.status !== undefined) patch.status = m.status;
+            if (m.pinned !== undefined) patch.pinned = m.pinned;
           } else if (m.op === "reprioritize") {
             if (m.priority !== undefined) patch.priority = m.priority;
           } else if (m.op === "complete") {

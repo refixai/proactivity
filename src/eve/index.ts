@@ -45,6 +45,7 @@ import {
   ensureSeededGoals,
   normalizeGoalSeeds,
   pickPrimaryGoal,
+  pinnedGoalIds,
 } from "../proactive/seeds.js";
 import type {
   GoalSeed,
@@ -135,7 +136,7 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
   })();
   const perWake = config.caps?.perWake ?? DEFAULT_CAPS_PER_WAKE;
   const caps: GovernanceCaps = { perPass: perWake, perTick: perWake };
-  const { seeds, pinnedGoalIds } = normalizeGoalSeeds(config.goals);
+  const seeds = normalizeGoalSeeds(config.goals);
   const ledgerWindow = config.ledgerWindow ?? DEFAULT_LEDGER_WINDOW;
 
   // Rebuild the governance envelope from serialized ids + the shared store.
@@ -194,7 +195,7 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
         trigger: "scheduled",
         dryRun: false,
       });
-      const goals = await ensureSeededGoals(store, tickId, entityId, seeds);
+      const goals = await ensureSeededGoals(store, entityId, seeds);
       const primary = pickPrimaryGoal(goals);
       if (!primary) throw new Error("eve proactivity: no goal available to attribute the wake to");
       const goalTickId = await store.insertGoalTick({
@@ -339,7 +340,7 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
               },
               transcript: { events, finalOutput: report },
               goals,
-              pinnedGoalIds,
+              pinnedGoalIds: pinnedGoalIds(goals),
               cadence: { minMs: cadence.min, maxMs: cadence.max },
               instructions: config.instructions ?? {},
             },
@@ -347,7 +348,7 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
           });
 
           if (reflection.goalMutations.length > 0) {
-            await store.applyGoalMutations(tick.tickId, reflection.goalMutations);
+            await store.applyGoalMutations(entityId, reflection.goalMutations);
           }
 
           const acted = attempts.some(

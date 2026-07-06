@@ -36,7 +36,7 @@ describe("E2E: single-loop heartbeat with scheduler", () => {
 
         if (ctx.boundary.tickNumber === 1) {
           // Tick 1: spot a lead, create a goal, send intro message
-          await store.applyGoalMutations(ctx.boundary.tickId, [
+          await store.applyGoalMutations(ctx.boundary.entityId, [
             {
               op: "create",
               goalId: "goal-alice",
@@ -63,7 +63,7 @@ describe("E2E: single-loop heartbeat with scheduler", () => {
 
         if (ctx.boundary.tickNumber === 2) {
           // Tick 2: Alice replied, complete the goal
-          await store.applyGoalMutations(ctx.boundary.tickId, [
+          await store.applyGoalMutations(ctx.boundary.entityId, [
             { op: "complete", goalId: "goal-alice", reasoning: "Alice replied" },
           ]);
 
@@ -396,7 +396,7 @@ describe("E2E: plan/act heartbeat", () => {
 
     // Seed goals
     const { tickId: seedTick } = await store.insertTick({ entityId: "org-1", trigger: "manual", dryRun: false });
-    await store.applyGoalMutations(seedTick, [
+    await store.applyGoalMutations("org-1", [
       { op: "create", goalId: "g1", title: "G1", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
       { op: "create", goalId: "g2", title: "G2", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ]);

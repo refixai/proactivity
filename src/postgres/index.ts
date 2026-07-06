@@ -99,6 +99,20 @@ CREATE INDEX IF NOT EXISTS idx_attempts_tick ON proactivity_attempts (tick_id, g
 CREATE INDEX IF NOT EXISTS idx_attempts_goal ON proactivity_attempts (goal_id, attempted_at);
 `;
 
+// 002: pinned lives on the goal record (survives restarts and runtime-added
+// goals), and entity state carries the rolling ledger summary for
+// report.summarizeOlderWakes.
+const MIGRATION_002 = `
+ALTER TABLE proactivity_goals ADD COLUMN IF NOT EXISTS pinned boolean NOT NULL DEFAULT false;
+ALTER TABLE proactivity_state ADD COLUMN IF NOT EXISTS ledger_summary text;
+ALTER TABLE proactivity_state ADD COLUMN IF NOT EXISTS ledger_summary_through_tick integer;
+`;
+
+const MIGRATIONS: Array<{ name: string; sql: string }> = [
+  { name: "001_initial", sql: MIGRATION_001 },
+  { name: "002_pinned_and_ledger_summary", sql: MIGRATION_002 },
+];
+
 export type PostgresStoreConfig =
   | { connectionString: string }
   | { pool: pg.Pool };
@@ -108,6 +122,8 @@ const toEntityState = (row: Record<string, unknown>): EntityState => ({
   enabled: row.enabled as boolean,
   lastTickAt: row.last_tick_at ? new Date(row.last_tick_at as string) : null,
   nextScheduledTickAt: row.next_scheduled_tick_at ? new Date(row.next_scheduled_tick_at as string) : null,
+  ledgerSummary: (row.ledger_summary as string | null) ?? null,
+  ledgerSummaryThroughTick: (row.ledger_summary_through_tick as number | null) ?? null,
 });
 
 const toTickRecord = (row: Record<string, unknown>): TickRecord => ({
@@ -137,6 +153,7 @@ const toGoalRecord = (row: Record<string, unknown>): GoalRecord => ({
   creationReasoning: row.creation_reasoning as string,
   status: row.status as GoalRecord["status"],
   priority: row.priority as GoalRecord["priority"],
+  pinned: (row.pinned as boolean | null) ?? false,
   lastWorkedAt: row.last_worked_at ? new Date(row.last_worked_at as string) : null,
   createdAt: new Date(row.created_at as string),
   updatedAt: new Date(row.updated_at as string),
@@ -191,6 +208,8 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
       if (patch.enabled !== undefined) { columns.push("enabled"); values.push(patch.enabled); }
       if (patch.lastTickAt !== undefined) { columns.push("last_tick_at"); values.push(patch.lastTickAt); }
       if (patch.nextScheduledTickAt !== undefined) { columns.push("next_scheduled_tick_at"); values.push(patch.nextScheduledTickAt); }
+      if (patch.ledgerSummary !== undefined) { columns.push("ledger_summary"); values.push(patch.ledgerSummary); }
+      if (patch.ledgerSummaryThroughTick !== undefined) { columns.push("ledger_summary_through_tick"); values.push(patch.ledgerSummaryThroughTick); }
 
       const colList = columns.length ? `, ${columns.join(", ")}` : "";
       const valList = columns.length ? `, ${columns.map(() => `$${idx++}`).join(", ")}` : "";
@@ -262,6 +281,16 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
       return rows.map(toTickRecord);
     },
 
+    async listTicksInRange(entityId, opts) {
+      const { rows } = await query(
+        `SELECT * FROM proactivity_ticks
+         WHERE entity_id = $1 AND tick_number > $2 AND tick_number <= $3
+         ORDER BY tick_number ASC LIMIT $4`,
+        [entityId, opts.afterTick, opts.throughTick, opts.limit],
+      );
+      return rows.map(toTickRecord);
+    },
+
     // --- Goals ---
 
     async listGoals(entityId, filter) {
@@ -280,21 +309,19 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
       return rows[0] ? toGoalRecord(rows[0]) : null;
     },
 
-    async applyGoalMutations(tickId, mutations: GoalMutation[]) {
+    async applyGoalMutations(entityId, mutations: GoalMutation[]) {
       // All-or-nothing: a mid-batch failure must not leave the portfolio half-mutated.
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const { rows: tickRows } = await client.query("SELECT entity_id FROM proactivity_ticks WHERE id = $1", [tickId]);
-        const entityId = tickRows[0]?.entity_id as string ?? "unknown";
 
         for (const m of mutations) {
           if (m.op === "create") {
             const goalId = m.goalId ?? crypto.randomUUID();
             await client.query(
-              `INSERT INTO proactivity_goals (id, entity_id, title, objective, done_condition, findings, next_actions, creation_reasoning, priority)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-              [goalId, entityId, m.title, m.objective ?? "", m.doneCondition ?? "", m.findings ?? "", m.nextActions ?? null, m.reasoning, m.priority ?? "medium"],
+              `INSERT INTO proactivity_goals (id, entity_id, title, objective, done_condition, findings, next_actions, creation_reasoning, priority, pinned)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              [goalId, entityId, m.title, m.objective ?? "", m.doneCondition ?? "", m.findings ?? "", m.nextActions ?? null, m.reasoning, m.priority ?? "medium", m.pinned ?? false],
             );
           } else if (m.op === "update") {
             const sets: string[] = ["updated_at = now()"];
@@ -307,6 +334,7 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
             if (m.nextActions !== undefined) { sets.push(`next_actions = $${i++}`); vals.push(m.nextActions); }
             if (m.priority !== undefined) { sets.push(`priority = $${i++}`); vals.push(m.priority); }
             if (m.status !== undefined) { sets.push(`status = $${i++}`); vals.push(m.status); }
+            if (m.pinned !== undefined) { sets.push(`pinned = $${i++}`); vals.push(m.pinned); }
             // entity_id scope: an LLM-supplied goalId can't reach another entity's goal.
             vals.push(entityId);
             await client.query(`UPDATE proactivity_goals SET ${sets.join(", ")} WHERE id = $1 AND entity_id = $${i}`, vals);
@@ -420,10 +448,12 @@ export const createPostgresStore = (config: PostgresStoreConfig): ProactivitySto
             applied_at timestamptz NOT NULL DEFAULT now()
           )
         `);
-        const { rows } = await client.query("SELECT name FROM proactivity_migrations WHERE name = $1", ["001_initial"]);
-        if (rows.length === 0) {
-          await client.query(MIGRATION_001);
-          await client.query("INSERT INTO proactivity_migrations (name) VALUES ($1)", ["001_initial"]);
+        for (const migration of MIGRATIONS) {
+          const { rows } = await client.query("SELECT name FROM proactivity_migrations WHERE name = $1", [migration.name]);
+          if (rows.length === 0) {
+            await client.query(migration.sql);
+            await client.query("INSERT INTO proactivity_migrations (name) VALUES ($1)", [migration.name]);
+          }
         }
         await client.query("COMMIT");
       } catch (err) {

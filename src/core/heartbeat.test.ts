@@ -393,7 +393,7 @@ describe("createPlanActHeartbeat", () => {
     await store.upsertState("e1", { enabled: true });
 
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "create", goalId: "g1", title: "Test", objective: "obj", doneCondition: "done", findings: "", reasoning: "seed" },
     ]);
     await store.updateTick(tickId, { status: "completed", completedAt: new Date() });
@@ -447,7 +447,7 @@ describe("createPlanActHeartbeat", () => {
     await store.upsertState("e1", { enabled: true });
 
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "create", goalId: "g-liar", title: "L", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
       { op: "create", goalId: "g-crash", title: "C", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ]);
@@ -495,7 +495,7 @@ describe("createPlanActHeartbeat", () => {
     await store.upsertState("e1", { enabled: true });
 
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "create", goalId: "g1", title: "T", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ]);
     await store.updateTick(tickId, { status: "completed", completedAt: new Date() });
@@ -541,7 +541,7 @@ describe("createPlanActHeartbeat", () => {
     await store.upsertState("e1", { enabled: true });
 
     const { tickId } = await store.insertTick({ entityId: "e1", trigger: "manual", dryRun: false });
-    await store.applyGoalMutations(tickId, [
+    await store.applyGoalMutations("e1", [
       { op: "create", goalId: "g1", title: "G1", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
       { op: "create", goalId: "g2", title: "G2", objective: "o", doneCondition: "d", findings: "", reasoning: "r" },
     ]);

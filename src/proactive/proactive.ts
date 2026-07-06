@@ -27,7 +27,7 @@ import { parseDuration } from "./duration.js";
 import { consoleNarrator } from "./observe.js";
 import { runReflection } from "./reflect.js";
 import { loadLedger, renderReport } from "./report.js";
-import { ensureSeededGoals, normalizeGoalSeeds, pickPrimaryGoal } from "./seeds.js";
+import { ensureSeededGoals, normalizeGoalSeeds, pickPrimaryGoal, pinnedGoalIds } from "./seeds.js";
 import { runInTickScope } from "./tickScope.js";
 import type {
   ProactiveAgentAdapter,
@@ -78,7 +78,7 @@ export const proactive = <TCustom = unknown>(
   // One goal-tick per wake, so the per-pass and per-tick ceilings coincide.
   const caps: GovernanceCaps = { perPass: perWake, perTick: perWake };
 
-  const { seeds, pinnedGoalIds } = normalizeGoalSeeds(config.goals);
+  const seeds = normalizeGoalSeeds(config.goals);
   const ledgerWindow = config.ledgerWindow ?? DEFAULT_LEDGER_WINDOW;
 
   // The heartbeat callback doesn't receive the trigger (it's a tick-row
@@ -115,7 +115,7 @@ export const proactive = <TCustom = unknown>(
       }
 
       // --- Ensure declared goals exist (idempotent on stable ids) ---
-      goals = await ensureSeededGoals(store, boundary.tickId, boundary.entityId, seeds);
+      goals = await ensureSeededGoals(store, boundary.entityId, seeds);
 
       // --- Primary goal: where this wake's governed actions attribute ---
       const primary = pickPrimaryGoal(goals);
@@ -183,7 +183,9 @@ export const proactive = <TCustom = unknown>(
           context,
           transcript,
           goals,
-          pinnedGoalIds,
+          // Derived from the live portfolio, so runtime-added pinned goals
+          // (handle.addGoal) are shielded exactly like config-declared ones.
+          pinnedGoalIds: pinnedGoalIds(goals),
           cadence: { minMs: cadence.min, maxMs: cadence.max },
           instructions: config.instructions ?? {},
         },
@@ -201,7 +203,7 @@ export const proactive = <TCustom = unknown>(
       });
 
       if (reflection.goalMutations.length > 0) {
-        await store.applyGoalMutations(boundary.tickId, reflection.goalMutations);
+        await store.applyGoalMutations(boundary.entityId, reflection.goalMutations);
       }
 
       // The wake's ledger entry. `acted` derives from the audit trail, not
