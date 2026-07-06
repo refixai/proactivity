@@ -190,6 +190,8 @@ export const proactive = <TCustom = unknown>(
       // --- REFLECT: bookkeeping + pacing on the dev's model ---
       const reflection = await runReflection({
         model: config.reflection.model,
+        store,
+        runOverride: config.reflection.run,
         promptContext: {
           context,
           transcript,

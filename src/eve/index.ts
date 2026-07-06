@@ -361,6 +361,8 @@ export const createEveProactivity = (config: EveProactivityConfig): EveProactivi
 
           const reflection = await runReflection({
             model,
+            store,
+            runOverride: config.reflection.run,
             promptContext: {
               context: {
                 entityId,

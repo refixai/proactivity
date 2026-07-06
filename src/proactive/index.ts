@@ -29,6 +29,7 @@ export type {
   ReasoningModel,
   ReflectionConfig,
   ReflectionInstructions,
+  ReflectionRunContext,
   ReflectPromptContext,
   ShouldWakeContext,
   Transcript,

@@ -694,3 +694,69 @@ describe("handle goal APIs", () => {
     expect((await store.getLatestTick("e1"))!.status).toBe("completed");
   });
 });
+
+// --- reflection.run: the deep-reasoning hatch --------------------------------
+
+describe("reflection.run", () => {
+  test("replaces the model call, gets the store, and is still validated", async () => {
+    const store = createTestStore();
+    const { adapter } = makeAdapter();
+    const { model, prompts } = makeModel(reflection());
+    let sawDefaultPrompt = "";
+    let sawTicks = -1;
+
+    const handle = proactive(adapter, {
+      reflection: {
+        model,
+        run: async (ctx) => {
+          // Deep reflection can read further back than the prompt carries.
+          sawTicks = (await ctx.store.listRecentTicks(ctx.context.entityId, { limit: 50 })).length;
+          sawDefaultPrompt = ctx.defaultPrompt;
+          return {
+            ledgerEntry: "deep pass: cross-checked the full history",
+            goalMutations: [
+              // Tries to complete a pinned goal — the shield must still hold.
+              { op: "complete", goalId: "standing", reasoning: "nope" },
+            ],
+            nextWakeMinutes: 100_000, // way out of bounds — must clamp to max
+            nextWakeReasoning: "long horizon",
+          };
+        },
+      },
+      store,
+      observe: false,
+      goals: [{ id: "standing", title: "Standing", objective: "o", doneCondition: "d", pinned: true }],
+      cadence: { min: "15m", max: "24h" },
+    });
+    await handle.wake("e1");
+
+    expect(prompts).toHaveLength(0); // the default single call never ran
+    expect(sawTicks).toBe(1);
+    expect(sawDefaultPrompt).toContain("# Reflection");
+    expect((await store.getGoal("standing"))!.status).toBe("active"); // shield held
+    const tick = (await store.getLatestTick("e1"))!;
+    expect(tick.cadenceHintMs).toBe(24 * 60 * 60_000); // clamped to max
+  });
+
+  test("a throwing run override degrades instead of failing the wake", async () => {
+    const store = createTestStore();
+    const { adapter } = makeAdapter();
+    const { model } = makeModel(reflection());
+    const handle = proactive(adapter, {
+      reflection: {
+        model,
+        run: async () => {
+          throw new Error("sub-agent exploded");
+        },
+      },
+      store,
+      observe: false,
+    });
+    await handle.wake("e1");
+
+    const tick = (await store.getLatestTick("e1"))!;
+    expect(tick.status).toBe("completed");
+    const [goalTick] = await store.listGoalTicks(tick.id);
+    expect(goalTick!.summary).toContain("reflection run override failed: sub-agent exploded");
+  });
+});

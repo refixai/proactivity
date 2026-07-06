@@ -16,9 +16,10 @@
 // the agent's work already happened; bookkeeping must not undo it.
 
 import { validateGoalMutations } from "../core/goals.js";
-import type { GoalMutation, GoalPriority, GoalRecord } from "../core/types.js";
+import type { GoalMutation, GoalPriority, GoalRecord, ProactivityStore } from "../core/types.js";
 import type {
   ReasoningModel,
+  ReflectionRunContext,
   ReflectPromptContext,
   Transcript,
 } from "./types.js";
@@ -298,20 +299,33 @@ export const parseReflectOutput = (
 
 export const runReflection = async (opts: {
   model: ReasoningModel;
+  store: ProactivityStore;
   promptContext: ReflectPromptContext;
   promptOverride?: (ctx: ReflectPromptContext) => string;
+  // reflection.run — full step takeover. The default path is one structured-
+  // output call; this replaces the CALL, never the validation: whatever it
+  // returns still goes through parseReflectOutput (clamping, pinned shield).
+  runOverride?: (ctx: ReflectionRunContext) => Promise<unknown>;
 }): Promise<ReflectOutput> => {
   const prompt = (opts.promptOverride ?? buildReflectPrompt)(opts.promptContext);
 
   let raw: unknown;
   try {
-    raw = await opts.model.generate(prompt, REFLECT_OUTPUT_SCHEMA as unknown as Record<string, unknown>);
+    raw = opts.runOverride
+      ? await opts.runOverride({
+          ...opts.promptContext,
+          store: opts.store,
+          defaultPrompt: prompt,
+          schema: REFLECT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+        })
+      : await opts.model.generate(prompt, REFLECT_OUTPUT_SCHEMA as unknown as Record<string, unknown>);
   } catch (err) {
     // Reflection failing must not fail the wake — degrade to defaults and
     // record why, so the gap is visible in the ledger instead of silent.
     const message = err instanceof Error ? err.message : String(err);
+    const step = opts.runOverride ? "run override" : "model call";
     return parseReflectOutput(
-      { ledgerEntry: `(reflection model call failed: ${message})` },
+      { ledgerEntry: `(reflection ${step} failed: ${message})` },
       {
         goals: opts.promptContext.goals,
         pinnedGoalIds: opts.promptContext.pinnedGoalIds,

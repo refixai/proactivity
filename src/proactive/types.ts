@@ -197,6 +197,18 @@ export type ReflectionInstructions = {
   ledger?: string;
 };
 
+// What reflection.run receives — everything the default single-call step
+// uses, plus the store (so deep reflection can read further back than the
+// prompt carries: older ticks, attempts, other goals).
+export type ReflectionRunContext = ReflectPromptContext & {
+  store: ProactivityStore;
+  // The default prompt, prebuilt for this wake (honors reflection.prompt) —
+  // embed it in your own flow or ignore it.
+  defaultPrompt: string;
+  // The output schema the return value must satisfy (REFLECT_OUTPUT_SCHEMA).
+  schema: Record<string, unknown>;
+};
+
 // Everything reflection-related lives under one key: reflection is the SDK's
 // own reasoning step (bookkeeping + pacing after each wake), and grouping it
 // keeps `model` from reading as "the model my agent runs on" — it isn't; the
@@ -209,6 +221,13 @@ export type ReflectionConfig = {
   // Full prompt takeover for the rare case appending isn't enough. The output
   // schema stays enforced either way.
   prompt?: (ctx: ReflectPromptContext) => string;
+  // Full STEP takeover — the deep-reasoning hatch. Compute the verdict with
+  // whatever machinery you want (one call, a sub-agent over the store, an
+  // every-Nth-wake deep pass) and return something schema-shaped. The SDK
+  // still validates, clamps the cadence, and shields pinned goals; a throw
+  // degrades to defaults exactly like a failed model call. Takes precedence
+  // over `prompt` (which still shapes ctx.defaultPrompt).
+  run?: (ctx: ReflectionRunContext) => Promise<unknown>;
 };
 
 export type ProactiveConfig<TCustom = unknown> = {
