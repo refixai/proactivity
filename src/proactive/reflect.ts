@@ -51,7 +51,7 @@ const GOAL_MUTATION_SCHEMA = {
     findings: {
       type: "string",
       description:
-        "The goal's full replacement scratchpad: current state, open threads (what you're waiting on, since when), next steps.",
+        "The goal's full replacement scratchpad: current state, open threads (each with an absolute date, the ledger action that started the wait, and a horizon), next steps.",
     },
     nextActions: { type: "string" },
     priority: { type: "string", enum: ["low", "medium", "high", "critical"] },
@@ -154,7 +154,7 @@ export const buildReflectPrompt = (ctx: ReflectPromptContext): string => {
 
   return `# Reflection
 
-You are the reflection step of a proactive agent runtime. The agent for entity "${context.entityId}" just finished wake #${context.tickNumber}. Your job is bookkeeping and pacing — NOT re-doing the agent's work: write the ledger entry, evolve the goal portfolio, and decide when to wake next.
+You are the reflection step of a proactive agent runtime. The agent for entity "${context.entityId}" just finished wake #${context.tickNumber}. The current time is ${context.now.toISOString()}. Your job is bookkeeping and pacing — NOT re-doing the agent's work: write the ledger entry, evolve the goal portfolio, and decide when to wake next.
 
 ## The goal portfolio (before this wake)
 ${formatGoals(goals, pinnedGoalIds)}
@@ -166,7 +166,7 @@ ${renderTranscript(transcript)}
 Write one tight paragraph your future self will rely on: what was observed, what was done (or deliberately not done), and anything in flight. Be concrete — names, identifiers, timestamps beat vibes. A quiet wake with a clear reason is a good entry.${instructions.ledger ? `\n\nProduct-specific guidance: ${instructions.ledger}` : ""}
 
 ## How to think about goals
-Each goal's \`findings\` is its scratchpad — you own it. Rewrite it (full replacement, not a diff) with three sections: current state; open threads (what you're waiting on and since when); next steps. Update a goal only when this wake actually taught you something. Create a goal only for a real mission worth pursuing across wakes; complete/archive boldly when done or stale — a zombie goal is worse than a missing one. Goals marked PINNED are standing missions: update their scratchpad freely, never complete/pause/archive them.${instructions.goals ? `\n\nProduct-specific guidance: ${instructions.goals}` : ""}
+Each goal's \`findings\` is its scratchpad — you own it. Rewrite it (full replacement, not a diff) with three sections: current state; open threads; next steps. Every open thread must be anchored: an absolute date, the ledger action that started the wait, and a horizon — "asked Alice on 2026-07-01 (wake #12), expect a reply by 2026-07-04", never a bare "waiting on Alice". A thread past its horizon cannot be copied forward as-is: kill it, or mark it OVERDUE so the next wake verifies it against ground truth instead of waiting longer. Update a goal only when this wake actually taught you something. Create a goal only for a real mission worth pursuing across wakes; complete/archive boldly when done or stale — a zombie goal is worse than a missing one. Goals marked PINNED are standing missions: update their scratchpad freely, never complete/pause/archive them.${instructions.goals ? `\n\nProduct-specific guidance: ${instructions.goals}` : ""}
 
 ## How to think about the next wake
 Pick nextWakeMinutes between ${minMinutes} and ${maxMinutes} (values outside are clamped). Match the interval to what you're actually waiting for: your own follow-through → short; an external system that changes hourly → medium; a human reply → long. Activity this wake usually means look again sooner; a quiet wake means back off.${instructions.scheduling ? `\n\nProduct-specific guidance: ${instructions.scheduling}` : ""}

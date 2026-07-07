@@ -122,7 +122,9 @@ export const renderReport = (ctx: Omit<WakeContext, "report">): string => {
   lines.push(
     "You woke up on your own initiative. Review the situation with your tools and decide what — if anything — deserves action. " +
       "Acting is optional: a wake where you deliberately do nothing is a good wake if nothing warranted attention. " +
-      "Never repeat an action the ledger already shows as taken unless something genuinely changed.",
+      "Never repeat an action the ledger already shows as taken unless something genuinely changed. " +
+      "Goal scratchpads are your past self's unverified notes; the ledger is ground truth. " +
+      "An open thread past its stated horizon (or marked OVERDUE) means verify it with your tools this wake, not keep waiting.",
   );
 
   return lines.join("\n");
