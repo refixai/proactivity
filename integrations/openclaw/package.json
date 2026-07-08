@@ -1,6 +1,6 @@
 {
   "name": "@refix/proactivity-openclaw",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Governance, durable goals, and cadence for a proactive OpenClaw agent — a @refix/proactivity plugin.",
   "type": "module",
   "license": "Apache-2.0",
