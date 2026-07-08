@@ -5,6 +5,7 @@
   "type": "module",
   "license": "Apache-2.0",
   "author": "Refix AI",
+  "repository": { "type": "git", "url": "git+https://github.com/refixai/proactivity.git", "directory": "integrations/openclaw" },
   "main": "./dist/index.js",
   "exports": { ".": "./dist/index.js" },
   "files": ["dist", "openclaw.plugin.json"],
