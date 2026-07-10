@@ -1,0 +1,98 @@
+---
+title: "Observability"
+description: "The ProactiveEvent stream, the default console narrator, custom observers, and framework-specific tracing."
+---
+
+## The event stream
+
+Every wake emits a `ProactiveEvent` stream in order:
+
+```
+wake_started
+  → agent_event* (live, per tool call and model turn)
+  → governance*  (per governed action: outcome + reasoning)
+  → reflection   (ledger entry + goal mutations + next wake)
+wake_completed  (or wake_skipped / wake_failed)
+```
+
+## Default narrator
+
+Omit `observe` and the SDK prints to console:
+
+```
+[proactive:acme/api] wake #1 (scheduled) — 1 goal
+[proactive:acme/api] ⚙ list_issues {"repo":"acme/api"}
+[proactive:acme/api] 💭 Nothing changed. No post warranted.
+[proactive:acme/api] ✔ post_to_slack — taken
+[proactive:acme/api] ✎ escalated 2 new bugs — next wake in 30m
+[proactive:acme/api] wake #1 done — next wake at 6:47 PM
+```
+
+Emoji legend: `⚙` tool call · `💭` model thinking · `✔` action taken · `⛔` governance denial · `✎` reflection (ledger + goal ops + schedule).
+
+## Custom observer
+
+Pass a function to receive raw `ProactiveEvent` objects:
+
+```ts
+proactive(adapter, {
+  observe: (event) => {
+    myLogger.info({ event });
+  },
+  // ...
+});
+```
+
+Or silence completely:
+
+```ts
+observe: false
+```
+
+<Note>
+  Throwing observers are swallowed. An observer error never propagates to the wake — the wake continues and completes. Don't rely on observer errors for flow control.
+</Note>
+
+Custom observers receive **unclipped** raw events. The default narrator clips long arguments for readability; the raw event stream carries the full payloads.
+
+## Infrastructure errors
+
+`onError` receives infrastructure errors that run outside the main wake — background scheduled-wake failures and ledger-fold failures:
+
+```ts
+proactive(adapter, {
+  onError: (error) => {
+    Sentry.captureException(error);
+  },
+  // ...
+});
+```
+
+Default: `console.error`. Errors inside a wake (agent throws, reflection throws) are handled inline and do not route through `onError`.
+
+## LangSmith (LangGraph)
+
+Set `LANGCHAIN_API_KEY`, `LANGCHAIN_TRACING_V2=true`, and `LANGCHAIN_PROJECT`. Each proactive wake appears as a trace rooted at `runName: "proactive-wake"`. No additional wiring beyond the env vars.
+
+## Anthropic tracing
+
+The Anthropic adapter hands your run function a `Proxy` over `messages.create` that records each call. To surface these in a tracing dashboard, wrap the `Anthropic` client with your tracing SDK (LangSmith `wrapAnthropic`, Braintrust, etc.) before passing it to `fromAnthropic()`:
+
+```ts
+import { wrapAnthropic } from "langsmith/wrappers";
+import Anthropic from "@anthropic-ai/sdk";
+
+const traced = wrapAnthropic(new Anthropic());
+
+proactive(fromAnthropic({ client: traced, run }), { /* ... */ });
+```
+
+<Warning>
+  Never pass the client, env, or any secret-bearing object through a tracing wrapper's **inputs**. Trace inputs are uploaded to the tracing backend; an API key captured as an input rides along with it. Wrap the client (as above) so only request/response payloads are traced — not your configuration.
+</Warning>
+
+## Related
+
+- [Architecture](/concepts/architecture) — the wake lifecycle these events describe
+- [Events reference](/reference/events) — the full `ProactiveEvent` union
+- [`proactive()` reference](/reference/proactive) — `observe` and `onError` config

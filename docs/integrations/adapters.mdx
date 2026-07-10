@@ -1,0 +1,270 @@
+---
+title: "Adapters"
+description: "The adapter contract, the first-class adapters for LangGraph and Anthropic, and how to wrap any loop you own."
+---
+
+An adapter connects your agent to `proactive()`. It is the first argument to the wrapper and has one job: run your unchanged agent for one wake and return a transcript.
+
+<Snippet file="snippets/memory-store-warning.mdx" />
+
+## The contract
+
+```ts
+type ProactiveAgentAdapter = {
+  name: string;
+  run(input: AgentRunInput): Promise<Transcript>;
+};
+```
+
+`run` receives an `AgentRunInput`:
+
+| Field | Description |
+|---|---|
+| `message` | The rendered wake report, ready to hand to the agent as a user message. |
+| `context` | The full `WakeContext` (goals, ledger, timestamps). |
+| `custom` | The output of your `agentInput` callback, when set. |
+| `observe` | Optional callback to stream each `TranscriptEvent` for live narration. |
+
+It returns a `Transcript` — a list of `TranscriptEvent` entries (`model` and `tool_call`) plus an optional `finalOutput`. Reflection reads this to write the ledger entry and evolve goal scratchpads.
+
+## What's supported
+
+| Integration | How | Where |
+|---|---|---|
+| LangGraph | First-class adapter (`fromLangGraph`) | This page |
+| Anthropic SDK | First-class adapter (`fromAnthropic` / `anthropicLoop`) | This page |
+| Eve | Native integration (`createEveProactivity`) — no `proactive()` call | [Eve](/integrations/eve) |
+| OpenClaw | Plugin | [OpenClaw](/integrations/openclaw) |
+| Hermes | Plugin (Python) | [Hermes](/integrations/hermes) |
+| OpenAI SDK, Vercel AI SDK, Mastra | Patterns on the adapter contract — no shipped adapter | [Build a custom adapter](/guides/custom-adapter) |
+
+## First-class adapters
+
+<Tabs>
+  <Tab title="LangGraph">
+    `fromLangGraph(graph, opts?)` wraps any object with an `invoke()` method — a compiled graph, a prebuilt agent, a custom runnable. The SDK calls `graph.invoke({ messages: [{ role: "user", content: report }] }, { callbacks })`.
+
+    Transcript capture is via LangChain callbacks, which are inheritable: every node, subgraph, model call, and tool call inside the graph is recorded live. `runName: "proactive-wake"` labels traces in LangSmith when `LANGCHAIN_API_KEY` is set — no extra wiring.
+
+    Peer dependencies: `@langchain/core` and `zod`.
+
+    ```ts
+    import { ChatAnthropic } from "@langchain/anthropic";
+    import { tool } from "@langchain/core/tools";
+    import { createReactAgent } from "@langchain/langgraph/prebuilt";
+    import { proactive } from "@refix/proactivity";
+    import { fromLangGraph, governed, langchainModel } from "@refix/proactivity/langgraph";
+    import { z } from "zod";
+
+    const llm = new ChatAnthropic({ model: "claude-opus-4-8" });
+
+    // A read — not governed. Reads stay free.
+    const listSignups = tool(
+      async () => {
+        const signups = pendingSignups.splice(0);
+        return signups.length
+          ? `New signups to welcome: ${signups.join(", ")}`
+          : "No new signups since the last check.";
+      },
+      {
+        name: "list_signups",
+        description: "Return users who signed up since the last check.",
+        schema: z.object({}),
+      },
+    );
+
+    // A write — governed. Same name, description, and schema as before.
+    const sendEmail = tool(
+      async ({ userId, body }: { userId: string; body: string }) => {
+        await mailer.send(userId, body);
+        return "sent";
+      },
+      {
+        name: "send_email",
+        description: "Send a welcome email to a newly signed-up user.",
+        schema: z.object({ userId: z.string(), body: z.string() }),
+      },
+    );
+
+    // The agent — identical to a reactive one. governed() is the one structural touch.
+    const agent = createReactAgent({
+      llm,
+      tools: [listSignups, governed(sendEmail)],
+      prompt:
+        "You welcome new users. Each wake: call list_signups, then send_email to each one. " +
+        "If there are no new signups, take no action.",
+    });
+
+    const handle = proactive(fromLangGraph(agent), {
+      reflection: { model: langchainModel(llm) },
+      goals: [
+        {
+          title: "Welcome new signups",
+          objective: "Send a welcome email to every new signup. Stay silent if there are none.",
+          doneCondition: "All signups have been welcomed.",
+        },
+      ],
+      cadence: { min: "15m", max: "24h" },
+    });
+
+    await handle.start("workspace-1");
+    ```
+
+    This example is lifted from [`examples/langgraph`](https://github.com/refixai/proactivity/tree/main/examples/langgraph) and typechecked against real framework types.
+
+    **Reflection model.** `langchainModel(llm)` adapts any ChatModel that supports structured output to the `ReasoningModel` interface. Reuse your agent's model or pass a cheaper one:
+
+    ```ts
+    const cheap = new ChatAnthropic({ model: "claude-haiku-4-5" });
+    reflection: { model: langchainModel(cheap) }
+    ```
+  </Tab>
+
+  <Tab title="Anthropic">
+    `@refix/proactivity/anthropic` has **no peer dependency**. You pass the Anthropic client in at runtime; the SDK never imports `@anthropic-ai/sdk` itself. Any client with a compatible `messages.create` surface works (`AnthropicClientLike`).
+
+    There are two modes: keep your own loop, or let the SDK run one.
+
+    ### Keep your loop — `fromAnthropic`
+
+    `fromAnthropic({ client, run })` hands your hand-rolled loop a traced client with an identical surface. Every `messages.create` call through it is recorded; your loop code doesn't change. The wake report arrives as `message` where you used to put a hardcoded request.
+
+    ```ts
+    import Anthropic from "@anthropic-ai/sdk";
+    import { proactive } from "@refix/proactivity";
+    import { anthropicModel, fromAnthropic } from "@refix/proactivity/anthropic";
+
+    const anthropic = new Anthropic();
+
+    const handle = proactive(
+      fromAnthropic({
+        client: anthropic,
+        run: async ({ client, message }) => {
+          const messages = [{ role: "user" as const, content: message }];
+          while (true) {
+            const response = await client.messages.create({
+              model: "claude-opus-4-8",
+              max_tokens: 4096,
+              tools: myTools,
+              messages,
+            });
+            if (response.stop_reason === "end_turn") break;
+            const toolResults = await executeTools(response.content);
+            messages.push(
+              { role: "assistant", content: response.content },
+              { role: "user", content: toolResults },
+            );
+          }
+        },
+      }),
+      {
+        reflection: { model: anthropicModel(anthropic, "claude-opus-4-8") },
+        goals: [/* ... */],
+        cadence: { min: "15m", max: "24h" },
+      },
+    );
+
+    await handle.start("workspace-1");
+    ```
+
+    A hand-rolled loop has no tool object to wrap. Govern the side effect directly with `governedPerform` — see [Governance](/concepts/governance).
+
+    ### SDK-owned loop — `anthropicLoop`
+
+    `anthropicLoop({ client, model, tools, system, maxTurns? })` owns the call → execute → feed-results cycle. Mark side-effecting tools with `governed: true` (or an options object). `maxTurns` defaults to 12.
+
+    ```ts
+    import Anthropic from "@anthropic-ai/sdk";
+    import { proactive } from "@refix/proactivity";
+    import { anthropicLoop, anthropicModel } from "@refix/proactivity/anthropic";
+
+    const client = new Anthropic();
+
+    const handle = proactive(
+      anthropicLoop({
+        client,
+        model: "claude-opus-4-8",
+        system:
+          "You welcome new users. Each wake: call list_signups, then send_welcome_email for each one. " +
+          "If there are no new signups, do nothing.",
+        tools: [
+          {
+            name: "list_signups",
+            description: "Return users who signed up since the last check.",
+            input_schema: { type: "object", properties: {}, required: [] },
+            execute: async () => {
+              const signups = pendingSignups.splice(0);
+              return signups.length ? `New signups: ${signups.join(", ")}` : "No new signups.";
+            },
+          },
+          {
+            name: "send_welcome_email",
+            description: "Send a welcome email to a newly signed-up user.",
+            input_schema: {
+              type: "object",
+              properties: { userId: { type: "string" }, body: { type: "string" } },
+              required: ["userId", "body"],
+            },
+            governed: true, // ← routes through the governance envelope
+            execute: async (args) => {
+              const { userId, body } = args as { userId: string; body: string };
+              await mailer.send(userId, body);
+              return "sent";
+            },
+          },
+        ],
+      }),
+      {
+        reflection: { model: anthropicModel(client, "claude-opus-4-8") },
+        goals: [
+          {
+            title: "Welcome new signups",
+            objective: "Send a welcome email to every new signup. Stay silent if there are none.",
+            doneCondition: "All signups have been welcomed.",
+          },
+        ],
+        cadence: { min: "15m", max: "24h" },
+      },
+    );
+
+    await handle.start("workspace-1");
+    ```
+
+    This example is lifted from [`examples/anthropic`](https://github.com/refixai/proactivity/tree/main/examples/anthropic) and typechecked against real types. `anthropicModel(client, modelId)` adapts the client to the `ReasoningModel` interface; pass a cheaper model for reflection if you like.
+  </Tab>
+
+  <Tab title="Custom">
+    Any loop becomes an adapter by implementing `run`. Read the report from `input.message`, run your agent, and return a `Transcript`:
+
+    ```ts
+    import { proactive } from "@refix/proactivity";
+    import type { AgentRunInput, Transcript, TranscriptEvent } from "@refix/proactivity";
+
+    const myAdapter = {
+      name: "my-loop",
+      async run(input: AgentRunInput): Promise<Transcript> {
+        const events: TranscriptEvent[] = [];
+        const result = await myAgent.complete(input.message, {
+          onToolCall: (name, args, result) => events.push({ type: "tool_call", name, args, result }),
+          onModelOutput: (content) => events.push({ type: "model", content }),
+        });
+        return { events, finalOutput: result.text };
+      },
+    };
+
+    const handle = proactive(myAdapter, {
+      reflection: { model: myReasoningModel },
+      goals: [/* ... */],
+      cadence: { min: "15m", max: "24h" },
+    });
+    ```
+
+    Govern side effects with `governedPerform` (there is no tool object to wrap), stream live narration by calling `input.observe`, and supply reflection's model by implementing `ReasoningModel`. The full walkthrough — including OpenAI SDK, Vercel AI SDK, and Mastra patterns — is in [Build a custom adapter](/guides/custom-adapter).
+  </Tab>
+</Tabs>
+
+## Related
+
+- [Governance](/concepts/governance) — governing actions in each framework
+- [Build a custom adapter](/guides/custom-adapter) — the full custom-loop walkthrough
+- [LangGraph reference](/reference/langgraph) · [Anthropic reference](/reference/anthropic)

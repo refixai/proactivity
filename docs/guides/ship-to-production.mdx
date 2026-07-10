@@ -1,0 +1,86 @@
+---
+title: "Ship to production"
+description: "Move from the in-memory default to a Postgres store and BullMQ scheduler so the loop survives restarts."
+---
+
+The quickstart runs on an in-memory store and an in-process timer — both lost on restart. Production needs a durable store and a durable scheduler, plus a boot sequence that re-arms the loop. This guide makes that switch.
+
+## Prerequisites
+
+- A working `proactive()` setup (see [Quickstart](/quickstart)).
+- A Postgres database (`DATABASE_URL`).
+- A Redis instance (`REDIS_HOST`, `REDIS_PORT`) for BullMQ.
+
+<Steps>
+  <Step title="Add the peer dependencies">
+    ```bash
+    pnpm add pg bullmq
+    ```
+    `pg` backs the store; `bullmq` backs the scheduler. Both are optional peers — you only need them because you're using `/postgres` and `/bullmq`.
+  </Step>
+
+  <Step title="Swap the store and scheduler">
+    Replace the in-memory defaults with the durable adapters:
+
+    ```ts
+    import { proactive } from "@refix/proactivity";
+    import { createPostgresStore } from "@refix/proactivity/postgres";
+    import { createBullMQAdapter } from "@refix/proactivity/bullmq";
+
+    const store = createPostgresStore({ connectionString: process.env.DATABASE_URL });
+
+    const handle = proactive(adapter, {
+      reflection: { model },
+      goals,
+      cadence: { min: "15m", max: "24h" },
+      store,
+      schedule: createBullMQAdapter({
+        queueName: "proactive-wakes",
+        connection: {
+          host: process.env.REDIS_HOST ?? "localhost",
+          port: Number(process.env.REDIS_PORT ?? 6379),
+        },
+      }),
+    });
+    ```
+
+    Everything else — your adapter, goals, reflection model, cadence — is unchanged.
+  </Step>
+
+  <Step title="Migrate and resume on boot">
+    Run these in order, once, during startup:
+
+    ```ts
+    await store.migrate();  // idempotent; creates proactivity_* tables
+    await handle.resume();  // re-arm every entity the store says should be running
+    ```
+
+    `migrate()` is safe to call on every process start. `resume()` re-enqueues each enabled entity exactly once, regardless of how many wakes it missed while down.
+  </Step>
+
+  <Step title="Verify durability">
+    Start an entity, then confirm the state landed in Postgres:
+
+    ```ts
+    await handle.start("acme/api");
+    // In psql:
+    // select entity_id, enabled, next_scheduled_tick_at from proactivity_state;
+    ```
+
+    Now kill the process and restart it. With `resume()` in your boot path, the loop picks up where it left off — the timer was lost, but the schedule lives in Redis and the state in Postgres.
+  </Step>
+</Steps>
+
+<Check>
+  After a restart, you should see the entity wake on schedule without calling `start()` again. If it stays silent, confirm `resume()` runs at boot and that the entity's `enabled` is `true` in `proactivity_state`.
+</Check>
+
+## Running more than one replica
+
+The store is authoritative, so you can run several replicas of the same handle. `stop()` propagates through the store; the BullMQ queue delivers each scheduled wake to a single worker. See [Deployment](/production/deployment) for the multi-replica and failure-routing details.
+
+## Related
+
+- [Storage](/production/storage) — the Postgres store and table schema
+- [Deployment](/production/deployment) — schedulers, boot sequence, replicas
+- [Observability](/production/observability) — wiring `onError` into your alerting

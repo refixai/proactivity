@@ -1,0 +1,61 @@
+---
+title: "Examples"
+description: "Runnable, compile-checked examples against real framework dependencies."
+---
+
+Each example in the repo is a standalone package with real framework dependencies, a `pnpm typecheck` that runs in CI, and a README with setup instructions.
+
+<CardGroup cols={2}>
+  <Card title="LangGraph" icon="workflow" href="https://github.com/refixai/proactivity/tree/main/examples/langgraph">
+    A signup-welcome agent on `createReactAgent`, wrapped with `proactive(fromLangGraph(agent))`.
+  </Card>
+  <Card title="Anthropic SDK" icon="cpu" href="https://github.com/refixai/proactivity/tree/main/examples/anthropic">
+    The same agent on `anthropicLoop`, wrapped with `proactive()`.
+  </Card>
+  <Card title="Eve" icon="zap" href="https://github.com/refixai/proactivity/tree/main/examples/eve">
+    An Eve agent using the primitives-based Eve pattern (as of 2026-07).
+  </Card>
+</CardGroup>
+
+## What each example demonstrates
+
+- **LangGraph** (`examples/langgraph`) — a signup-welcome agent on `createReactAgent`: `fromLangGraph(agent)`, `governed(sendEmail)` as the one structural change, `langchainModel(llm)` for reflection, `pinned: true` goal seeding, and a short local-development cadence.
+- **Anthropic SDK** (`examples/anthropic`) — the same agent on `anthropicLoop`: `anthropicLoop({ client, model, tools, system })`, `governed: true` on the outbound tool, and `anthropicModel(client, model)` for reflection.
+
+## Run one locally
+
+Both examples share the same setup. Pick the adapter you want:
+
+<CodeGroup>
+```bash LangGraph
+cd examples/langgraph
+pnpm install
+cp .env.example .env  # add ANTHROPIC_API_KEY
+pnpm dev
+```
+
+```bash Anthropic
+cd examples/anthropic
+pnpm install
+cp .env.example .env  # add ANTHROPIC_API_KEY
+pnpm dev
+```
+</CodeGroup>
+
+## Integration shape tests
+
+[`src/integrations.test.ts`](https://github.com/refixai/proactivity/blob/main/src/integrations.test.ts) covers the integration pattern for all six frameworks in the [framework compatibility table](https://github.com/refixai/proactivity/blob/main/PRIMITIVES.md) — LangGraph, Vercel AI SDK, OpenAI SDK, Anthropic SDK, Mastra, and Eve — against framework-shaped stand-ins (no real framework imports). It verifies each pattern compiles and runs.
+
+| Framework | Runnable example | Shape tested |
+|---|---|---|
+| LangGraph | `examples/langgraph` | `integrations.test.ts` |
+| Vercel AI SDK | — (same pattern as LangGraph) | `integrations.test.ts` |
+| OpenAI SDK | — (same pattern as Anthropic) | `integrations.test.ts` |
+| Anthropic SDK | `examples/anthropic` | `integrations.test.ts` |
+| Mastra | — (same pattern as Anthropic) | `integrations.test.ts` |
+| Eve | `examples/eve` | `integrations.test.ts` |
+
+## Related
+
+- [Adapters](/integrations/adapters) — the code these examples are built from
+- [Build a custom adapter](/guides/custom-adapter) — Vercel AI SDK, OpenAI SDK, and Mastra patterns

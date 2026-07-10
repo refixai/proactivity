@@ -1,0 +1,56 @@
+---
+title: "Installation"
+description: "Requirements, package install, subpath map, and peer dependencies."
+---
+
+## Requirements
+
+- **Node ≥ 20** (uses `AsyncLocalStorage`, `structuredClone`, and top-level await)
+- **ESM only** — the package ships as ES modules. `require()` does not work. If your
+  tsconfig uses `"module": "CommonJS"`, set `"moduleResolution": "bundler"` or
+  `"node16"` and use dynamic `import()` at call sites.
+
+## Install
+
+<Snippet file="snippets/install.mdx" />
+
+## Subpaths
+
+The package exports its surface across subpaths so you only install what you use.
+All peers are optional; you need a peer only for the subpaths you import.
+
+| Subpath | Exports | Peer dep required |
+|---|---|---|
+| `@refix/proactivity` | Core: `proactive`, primitives, stores, types | none |
+| `@refix/proactivity/langgraph` | `fromLangGraph`, `governed`, `langchainModel` | `@langchain/core` · `zod` (for tool schema) |
+| `@refix/proactivity/anthropic` | `fromAnthropic`, `anthropicLoop`, `anthropicModel` | none |
+| `@refix/proactivity/eve` | `createEveProactivity` | none |
+| `@refix/proactivity/postgres` | `createPostgresStore` | `pg` |
+| `@refix/proactivity/bullmq` | `createBullMQAdapter` | `bullmq` |
+| `@refix/proactivity/timer` | `createTimerAdapter` | none |
+| `@refix/proactivity/prompts` | `buildTickPrompt`, `buildPlannerPrompt`, `buildExecutorPrompt` | none |
+
+<Note>
+  `/anthropic` has no peer dependency. The Anthropic client is passed in at runtime; the SDK never imports `@anthropic-ai/sdk` itself. This means you can pass any client with a compatible `messages.create` surface (`AnthropicClientLike`).
+</Note>
+
+## In-memory store
+
+`createTestStore` (also exported as `memoryStore`) is a fully functional store that lives in process memory. It works for local development and tests. Goals, the ledger, and the audit trail vanish on restart.
+
+```ts
+import { memoryStore } from "@refix/proactivity";
+
+const handle = proactive(adapter, {
+  store: memoryStore(), // default when store is omitted
+  // ...
+});
+```
+
+Switch to [`createPostgresStore`](/production/storage) before deploying.
+
+## Related
+
+- [Quickstart](/quickstart) — the wrap, end to end
+- [Adapters](/integrations/adapters) — the peer deps each framework needs
+- [Storage](/production/storage) — the production store

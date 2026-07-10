@@ -1,0 +1,106 @@
+---
+title: "Scheduling"
+description: "How the agent sets its own pace, how to trigger an immediate wake, and how stop, resume, and shouldWake work."
+---
+
+The agent is not on a fixed cron. After every wake, reflection picks the next wake time inside your `{ min, max }` window: tighter while things are moving, backed off toward the ceiling when quiet.
+
+## Cadence
+
+```ts
+proactive(adapter, {
+  cadence: {
+    min: "15m",   // floor — reflection never schedules sooner than this
+    max: "24h",   // ceiling — reflection never schedules later than this
+    default: "1h" // first wake + fallback when reflection degrades. Defaults to min if unset.
+  },
+  // ...
+});
+```
+
+Durations accept strings (`"30s"`, `"15m"`, `"1.5h"`, `"7d"`) or raw milliseconds. `min` and `max` are enforced even when reflection returns a value outside the window.
+
+**Defaults:** `min = "15m"`, `max = "24h"`, `default = min`.
+
+<Note>
+  The first wake fires after `cadence.default`, which equals `cadence.min` unless you set it explicitly. If you set `min: "15m"` and leave `default` unset, the first wake arrives 15 minutes after `handle.start()`. Use a short `default` (or `min`) for the first run in development.
+</Note>
+
+### Duration format
+
+| Suffix | Unit |
+|---|---|
+| `ms` | milliseconds |
+| `s` | seconds |
+| `m` | minutes |
+| `h` | hours |
+| `d` | days |
+
+Bare numbers are milliseconds. Invalid strings throw at startup, not silently at the first wake.
+
+## Immediate wakes
+
+`handle.wake(entityId)` triggers a wake outside the scheduler cycle. This is the webhook entry point:
+
+```ts
+app.post("/github-event", async (req, res) => {
+  await handle.wake("acme/api");
+  res.sendStatus(200);
+});
+```
+
+After a `wake()`, reflection picks the next cadence exactly as it would after a scheduled wake, and the loop continues.
+
+<Warning>
+  `handle.wake()` on a stopped entity gives it exactly one look and does not re-arm the schedule. The loop does not resurrect on `wake()`. Call `handle.start()` to restart a stopped loop.
+</Warning>
+
+## Stopping a loop
+
+`handle.stop(entityId)` sets the entity's `enabled` flag to `false` in the store. This is authoritative across replicas: any process running the same handle stops firing wakes for that entity once the store reflects the stop.
+
+```ts
+await handle.stop("acme/api");
+```
+
+## Resuming after a restart
+
+With a durable store, a process restart loses the in-memory timers but not the state. `handle.resume()` re-arms every entity the store says should be running:
+
+```ts
+await store.migrate();   // safe on every boot
+await handle.resume();   // re-arm every enabled entity
+```
+
+Call it once during startup, after the store and handle are constructed. See [Deployment](/production/deployment).
+
+## shouldWake — cost control
+
+`shouldWake` is the only pre-model hook. It runs before the agent is invoked and answers one question: is this worth a model call?
+
+```ts
+proactive(adapter, {
+  shouldWake: async (ctx) => {
+    // ctx has: entityId, now, lastWakeAt, goals
+    return await myQueue.hasPending(ctx.entityId);
+  },
+  // ...
+});
+```
+
+When `shouldWake` returns `false`:
+
+- The tick is recorded as `skipped`.
+- The wake count increments.
+- The clock re-arms at `cadence.default`.
+- The agent is **not** invoked; no model call is made.
+
+<Warning>
+  `shouldWake` may only answer "is this worth a model call at all?" It must not pre-digest what matters — that is the agent's job. A `shouldWake` that does substantive reasoning moves judgment from the model into TypeScript. What's new is a fact; what matters is a judgment.
+</Warning>
+
+## Related
+
+- [Architecture](/concepts/architecture) — where scheduling sits in the wake lifecycle
+- [Handle reference](/reference/handle) — `start`, `stop`, `wake`, `resume`
+- [`proactive()` reference](/reference/proactive) — `cadence` and `shouldWake` config

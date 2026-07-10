@@ -1,0 +1,85 @@
+---
+title: "Schedulers"
+description: "SchedulerAdapter interface, createBullMQAdapter, and createTimerAdapter."
+---
+
+## `SchedulerAdapter` interface
+
+The scheduler drives the wake loop. Implementing it lets you use any queue, cron, or workflow engine.
+
+```ts
+import type { SchedulerAdapter } from "@refix/proactivity";
+```
+
+```ts
+type SchedulerAdapter = {
+  // Enqueue a wake for entityId, firing after delayMs. jobId identifies the job.
+  enqueue(opts: { entityId: string; delayMs: number; jobId: string }): Promise<void>;
+
+  // Remove a previously enqueued job by its jobId.
+  remove(jobId: string): Promise<void>;
+
+  // Register the handler the adapter calls when a job fires.
+  onFire(handler: (entityId: string) => void): void;
+};
+```
+
+Each entity has at most one pending job. The scheduler derives a stable `jobId` per entity and calls `remove` before `enqueue` when rescheduling; `enqueue` must be idempotent for a known `jobId`. See [Custom stores and schedulers](/guides/custom-stores-and-schedulers) for an implementation walkthrough.
+
+---
+
+## `createBullMQAdapter(opts)`
+
+Production scheduler backed by Redis via BullMQ. Uses delayed jobs, not cron: each wake re-enqueues the next one with a delay equal to the reflected cadence.
+
+```ts
+import { createBullMQAdapter } from "@refix/proactivity/bullmq";
+```
+
+**Peer dep:** `bullmq`
+
+<ParamField body="opts.queueName" type="string" required>
+  BullMQ queue name. Use a dedicated queue — mixing proactive wakes with other jobs in the same queue is not recommended.
+</ParamField>
+
+<ParamField body="opts.connection" type="object" required>
+  Redis connection options passed to BullMQ's `Queue` and `Worker`:
+  - `host: string`
+  - `port: number`
+  - plus any other `ioredis` connection options
+</ParamField>
+
+### Behavior
+
+- Jobs are named `proactive-wake:{entityId}`
+- A new schedule for an entity removes the previous delayed job and adds a new one
+- A missed wake (process was down) fires once on reconnect — not once per missed interval
+- BullMQ retries failed wake handlers with exponential backoff (default BullMQ settings)
+
+---
+
+## `createTimerAdapter()`
+
+Development scheduler using `setTimeout`. Zero peer dependencies, in-process.
+
+```ts
+import { createTimerAdapter } from "@refix/proactivity/timer";
+```
+
+- Timers are stored in-process memory and lost on restart
+- Works in Node.js and any runtime with global `setTimeout`
+- Not suitable for production
+
+No options.
+
+---
+
+## Choosing between them
+
+| | `createTimerAdapter` | `createBullMQAdapter` |
+|---|---|---|
+| Restarts | Timers lost | Jobs survive in Redis |
+| Deps | None | `bullmq` + Redis |
+| Multi-process | No | Yes (shared queue) |
+| Missed wakes | Lost | One catch-up per entity |
+| Use for | Local dev, tests | Production |

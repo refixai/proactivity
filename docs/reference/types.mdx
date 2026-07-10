@@ -1,0 +1,223 @@
+---
+title: "Types"
+description: "Key types exported from @refix/proactivity."
+---
+
+All types are exported from the root `@refix/proactivity`:
+
+```ts
+import type { GoalRecord, GoalMutation, GoalStatus, GoalPriority, GovernanceOutcome, /* ... */ } from "@refix/proactivity";
+```
+
+## Goal types
+
+### `GoalRecord`
+
+A goal as stored in the database. All fields from `GoalSeed` plus:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` | Stable goal ID |
+| `entityId` | `string` | Owning entity |
+| `status` | `GoalStatus` | Current lifecycle status |
+| `findings` | `string \| null` | Scratchpad maintained by reflection |
+| `nextActions` | `string \| null` | Reflection's next steps |
+| `lastWorkedAt` | `Date \| null` | Last tick that worked this goal |
+| `createdAt` | `Date` | |
+| `updatedAt` | `Date` | |
+
+---
+
+### `GoalStatus`
+
+```ts
+type GoalStatus = "active" | "paused" | "completed" | "archived";
+```
+
+---
+
+### `GoalPriority`
+
+```ts
+type GoalPriority = "critical" | "high" | "normal" | "low";
+```
+
+---
+
+### `GoalMutation`
+
+A single mutation in a reflection output's `goalMutations[]` array.
+
+```ts
+type GoalMutation = {
+  op: GoalMutationOp;
+  goalId: string;
+  // op-specific fields:
+  title?: string;
+  objective?: string;
+  doneCondition?: string;
+  priority?: GoalPriority;
+  findings?: string;     // full-replacement scratchpad
+  nextActions?: string;
+  reasoning?: string;
+};
+```
+
+### `GoalMutationOp`
+
+```ts
+type GoalMutationOp = "create" | "update" | "reprioritize" | "pause" | "complete" | "archive";
+```
+
+---
+
+## Governance types
+
+### `GovernanceOutcome`
+
+```ts
+type GovernanceOutcome =
+  | "taken"
+  | "hard_denied"
+  | "soft_cap_denied"
+  | "soft_cap_overridden"
+  | "pending_approval";
+```
+
+---
+
+### `GovernanceCaps`
+
+```ts
+interface GovernanceCaps {
+  perPass: number; // actions per governance pass
+  perTick: number; // total actions per tick (wake)
+}
+```
+
+---
+
+## Adapter types
+
+### `ProactiveAgentAdapter`
+
+```ts
+interface ProactiveAgentAdapter {
+  name: string;
+  run(input: AgentRunInput): Promise<Transcript>;
+}
+```
+
+---
+
+### `AgentRunInput`
+
+| Field | Type | Description |
+|---|---|---|
+| `message` | `string` | Rendered wake report |
+| `context` | `WakeContext` | Full wake context |
+| `custom` | `TCustom \| undefined` | Output of `agentInput` callback |
+| `observe` | `((event) => void) \| undefined` | Emit live narration events |
+
+---
+
+### `Transcript`
+
+```ts
+interface Transcript {
+  events: TranscriptEvent[];
+  finalOutput?: string;
+}
+```
+
+---
+
+### `TranscriptEvent`
+
+```ts
+type TranscriptEvent =
+  | { type: "model"; content: string }
+  | { type: "tool_call"; name: string; args: unknown; result: unknown };
+```
+
+---
+
+## Context types
+
+### `WakeContext`
+
+| Field | Type | Description |
+|---|---|---|
+| `entityId` | `string` | |
+| `tickId` | `string` | |
+| `tickNumber` | `number` | |
+| `trigger` | `"scheduled" \| "manual"` | |
+| `now` | `Date` | |
+| `lastWakeAt` | `Date \| null` | |
+| `goals` | `GoalRecord[]` | Active + paused goals |
+| `ledger` | `LedgerWake[]` | Recent wakes (up to `report.recentWakes`) |
+| `report` | `string` | Rendered wake report |
+
+---
+
+### `ShouldWakeContext`
+
+Subset of `WakeContext` without `report` (the report hasn't been rendered yet):
+
+| Field | Type |
+|---|---|
+| `entityId` | `string` |
+| `tickNumber` | `number` |
+| `lastWakeAt` | `Date \| null` |
+| `trigger` | `"scheduled" \| "manual"` |
+| `goals` | `GoalRecord[]` |
+
+---
+
+## Reflection types
+
+### `ReasoningModel`
+
+```ts
+interface ReasoningModel {
+  generate(prompt: string, jsonSchema: object): Promise<unknown>;
+}
+```
+
+---
+
+### `ReflectPromptContext`
+
+Input to `reflection.prompt` function:
+
+| Field | Type |
+|---|---|
+| `context` | `WakeContext` |
+| `transcript` | `string` — rendered transcript (truncated) |
+| `goals` | `GoalRecord[]` |
+| `pinnedGoalIds` | `Set<string>` |
+| `cadence` | `{ minMs: number; maxMs: number }` |
+| `instructions` | `ReflectionInstructions` |
+
+---
+
+### `ReflectionRunContext`
+
+Input to `reflection.run` function. Extends `ReflectPromptContext` with:
+
+| Field | Type |
+|---|---|
+| `model` | `ReasoningModel` |
+| `store` | `ProactivityStore` |
+| `defaultPrompt` | `string` — what the built-in builder would have produced |
+| `schema` | `object` — the `REFLECT_OUTPUT_SCHEMA` JSON schema |
+
+---
+
+## Duration
+
+```ts
+type Duration = string | number;
+```
+
+String format: `"30s"`, `"15m"`, `"1.5h"`, `"7d"`, `"500ms"`. Numbers are milliseconds.

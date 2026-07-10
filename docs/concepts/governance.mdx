@@ -1,0 +1,152 @@
+---
+title: "Governance"
+description: "Opt-in per tool: idempotency, caps, outcomes, and how denials go back to the model in-band."
+---
+
+Governance is the envelope around side-effecting tools. Wrap the tools that act on the world; reads pass through untouched.
+
+## How to wrap a tool
+
+<Tabs>
+  <Tab title="LangGraph">
+    `governed(tool, opts?)` wraps any LangChain tool. The tool's name, description, and schema are unchanged.
+
+    ```ts
+    import { governed } from "@refix/proactivity/langgraph";
+
+    const agent = createReactAgent({
+      llm,
+      tools: [
+        listIssues,          // read — not governed, no envelope
+        governed(postToSlack), // write — governed
+      ],
+    });
+    ```
+
+    Options:
+
+    ```ts
+    governed(postToSlack, {
+      // Default: tool.name
+      actionType: "post_to_slack",
+      // Default: full args object
+      target: (args) => ({ channel: args.channel }),
+      // Default: none
+      reasoning: (args) => `Posting update to ${args.channel}`,
+    });
+    ```
+
+    `target` narrows the idempotency key to the fields that actually identify the action. Narrowing `target` to `{ channel }` means two calls with different `body` text but the same channel within a wake will deduplicate — useful when you want to prevent double-posts to a channel, not just identical messages.
+  </Tab>
+  <Tab title="Anthropic">
+    **With `anthropicLoop`:** set `governed: true` (or an options object) on the tool definition:
+
+    ```ts
+    anthropicLoop({
+      tools: [
+        {
+          name: "post_to_slack",
+          governed: true, // routes through the envelope
+          // ... or:
+          governed: {
+            actionType: "post_to_slack",
+            target: (args) => ({ channel: args.channel }),
+            reasoning: (args) => `Posting to ${args.channel}`,
+          },
+          execute: async (args) => { /* ... */ },
+        },
+      ],
+    });
+    ```
+
+    **With a hand-rolled loop:** use `governedPerform` directly:
+
+    ```ts
+    import { governedPerform } from "@refix/proactivity";
+
+    const { governanceOutcome } = await governedPerform({
+      actionType: "post_to_slack",
+      target: { channel: args.channel },
+      reasoning: `Posting to ${args.channel}`,
+      perform: async () => { await slack.post(args.channel, args.text); },
+    });
+    ```
+  </Tab>
+  <Tab title="Eve">
+    `governedTool(input)` returns an `EveToolDefinition` to pass to `defineTool`:
+
+    ```ts
+    const { governedTool } = createEveProactivity(config);
+
+    export default defineTool(governedTool({
+      description: "Send a follow-up nudge.",
+      inputSchema: z.object({ threadId: z.string(), nudge: z.string() }),
+      actionType: "send_nudge",
+      target: (args) => ({ threadId: args.threadId }),
+      perform: async (args) => { /* ... */ },
+    }));
+    ```
+  </Tab>
+  <Tab title="Custom">
+    `governedPerform` is the underlying primitive for any loop:
+
+    ```ts
+    import { governedPerform, describeGovernanceOutcome } from "@refix/proactivity";
+
+    const result = await governedPerform({
+      actionType: "send_email",
+      target: { userId },
+      reasoning: `Welcome email for ${userId}`,
+      perform: async () => { await mailer.send(userId, body); },
+    });
+
+    // Return the outcome in-band so the model can re-plan:
+    return describeGovernanceOutcome(result.governanceOutcome, result.denialReason);
+    ```
+  </Tab>
+</Tabs>
+
+## The idempotency key
+
+The key is `actionType + target + tickId`, derived deterministically. It is **claimed before the side effect executes**. If the process crashes after the key is claimed but before the action completes, a retry will find the key already claimed and the action will be blocked.
+
+This is why idempotency is enforced as a store constraint rather than a prompt instruction. A prompt saying "don't double-post" doesn't survive a crash.
+
+## Outcomes
+
+| Outcome | Meaning | What happens |
+|---|---|---|
+| `taken` | Action ran successfully | Attempt row written with this outcome |
+| `hard_denied` | Terminal — already claimed, or at the per-wake cap | Action did not run; model receives denial in-band |
+| `soft_cap_denied` | Soft cap triggered | Action did not run; re-dispatchable with `overrideReason` |
+| `soft_cap_overridden` | Soft cap overridden | Action ran; override reason recorded in the attempt row |
+| `pending_approval` | Dry-run mode | Action did not run; attempt row written for review |
+
+**`hard_denied` is terminal for this action in this wake.** The model receives the denial as the tool's return value and should re-plan accordingly.
+
+**`soft_cap_denied` is retriable.** The model can call the tool again with an `overrideReason` explaining why the action is still warranted.
+
+## Per-wake action cap
+
+`governance.maxActionsPerWake` (default `10`) is a hard ceiling on the number of governed actions that may run within a single wake. Actions beyond the ceiling receive `hard_denied`.
+
+```ts
+proactive(adapter, {
+  governance: { maxActionsPerWake: 5 },
+  // ...
+});
+```
+
+## Outside a wake
+
+<Note>
+  Outside a wake, governed tools are transparent passthroughs. The same agent can run reactively (called directly by your app code) without the governance envelope activating. The envelope is live only inside a proactive wake.
+</Note>
+
+This means you can wrap all your side-effecting tools with `governed()` without breaking your existing reactive usage.
+
+## Related
+
+- [Architecture](/concepts/architecture) — where governance sits in the wake lifecycle
+- [Adapters](/integrations/adapters) — governing actions per framework
+- [`proactive()` reference](/reference/proactive) — the `governance` config

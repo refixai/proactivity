@@ -1,0 +1,168 @@
+---
+title: "Primitives reference"
+description: "createHeartbeat, createPlanActHeartbeat, createScheduler, createGovernance, createLedger."
+---
+
+The primitives are what `proactive()` is built from. Use them directly when the wrapper's shape doesn't fit.
+
+```ts
+import {
+  createHeartbeat,
+  createPlanActHeartbeat,
+  createScheduler,
+  createGovernance,
+  createLedger,
+} from "@refix/proactivity";
+```
+
+See [Use the primitives directly](/guides/primitives) for usage patterns and examples.
+
+---
+
+## `createHeartbeat(config)`
+
+Manages a single tick: briefing sources, goal loading, and the tick function. Returns an object with `runTick(entityId, trigger)`.
+
+<ParamField body="config.store" type="ProactivityStore" required>
+  The persistence store.
+</ParamField>
+
+<ParamField body="config.cadence" type="object" required>
+  `{ min: number; max: number; default: number }` in milliseconds.
+</ParamField>
+
+<ParamField body="config.sources" type="BriefingSource[]">
+  Data sources loaded in parallel each tick. Each source: `{ name: string; load: (boundary: BriefingBoundary) => Promise<unknown> }`. The `boundary` carries `deltaCutoff: Date` marking what is new since the last tick.
+</ParamField>
+
+<ParamField body="config.governance" type="object">
+  `{ store: ProactivityStore; caps: GovernanceCaps }` — the governance envelope config.
+</ParamField>
+
+<ParamField body="config.tick" type="function" required>
+  `(ctx: TickContext) => Promise<TickResult>` — your agent's tick function.
+
+  `TickContext` carries: `briefing` (record keyed by source name), `goals`, `governance`, `boundary` (`tickId`, `tickNumber`, `entityId`, `trigger`, `deltaCutoff`).
+
+  `TickResult`: `{ cadenceHint: { nextTickMs: number; reasoning: string } }`.
+</ParamField>
+
+---
+
+## `createPlanActHeartbeat(config)`
+
+Like `createHeartbeat` but splits the tick into a planner and an executor. Returns `{ runTick(entityId, trigger) }`.
+
+<ParamField body="config.planner" type="function" required>
+  `(ctx: PlannerContext) => Promise<PlannerOutput>`
+
+  `PlannerOutput`: `{ goalMutations, selectedGoals, skippedGoals, cadenceHint }`.
+</ParamField>
+
+<ParamField body="config.executor" type="function" required>
+  `(ctx: ExecutorContext) => Promise<{ summary?: string }>`
+
+  Called once per selected goal. `ExecutorContext` carries `goal`, `goalTickId`, `governance`.
+
+  Whether the pass acted is derived from the governance ledger (attempt rows), not from the executor's return value.
+</ParamField>
+
+All other config fields are the same as `createHeartbeat`.
+
+---
+
+## `createScheduler(config)`
+
+The clock. Re-arms itself after each tick. Returns `{ start, stop, seedFromStore }`.
+
+<ParamField body="config.adapter" type="SchedulerAdapter" required>
+  Timer or BullMQ adapter.
+</ParamField>
+
+<ParamField body="config.store" type="ProactivityStore" required>
+</ParamField>
+
+<ParamField body="config.cadence" type="object" required>
+  `{ min: number; max: number; default: number }` in milliseconds.
+</ParamField>
+
+<ParamField body="config.identity" type="function" required>
+  `(entityId: string) => string` — produces the job/timer identifier. Typically `(id) => \`heartbeat:\${id}\``.
+</ParamField>
+
+<ParamField body="config.onTick" type="function" required>
+  `(entityId: string, trigger: "scheduled" | "manual") => Promise<void>` — called on each firing. Typically `heartbeat.runTick(entityId, trigger)`.
+</ParamField>
+
+### Methods
+
+- `scheduler.start(entityId)` — arm a loop for an entity
+- `scheduler.stop(entityId)` — cancel the pending schedule
+- `scheduler.seedFromStore()` — re-arm all entities with `enabled = true` (restart recovery)
+
+---
+
+## `createGovernance(config, tickId, entityId, ledger)`
+
+The governance envelope. Returns `{ dispatch(params) }`.
+
+<ParamField body="config.store" type="ProactivityStore" required>
+</ParamField>
+
+<ParamField body="config.caps" type="GovernanceCaps" required>
+  `{ perPass: number; perTick: number }`.
+</ParamField>
+
+<ParamField body="tickId" type="string" required>
+  The current tick's ID.
+</ParamField>
+
+<ParamField body="entityId" type="string" required>
+</ParamField>
+
+<ParamField body="ledger" type="Ledger" required>
+  Created by `createLedger()`. Tracks per-pass and per-tick counts in memory.
+</ParamField>
+
+### `governance.dispatch(params)`
+
+```ts
+await governance.dispatch({
+  goalId: string;
+  goalTickId: string;
+  actionType: string;
+  target: Record<string, unknown>;
+  reasoning?: string;
+  perform: () => Promise<void>;
+  overrideReason?: string; // re-dispatch soft_cap_denied with this
+});
+// Returns: { governanceOutcome: GovernanceOutcome; denialReason?: string }
+```
+
+Governance never throws. Side-effect failures are caught and wrapped in a denial result.
+
+---
+
+## `createLedger()`
+
+Creates an in-memory ledger that tracks governance counts for cap enforcement.
+
+```ts
+const ledger = createLedger();
+const governance = createGovernance(config, tickId, entityId, ledger);
+```
+
+For Eve's per-step governance rebuild, warm the ledger from the store's attempt rows before creating governance:
+
+```ts
+const ledger = createLedger();
+for (const attempt of await store.listAttempts(tickId)) {
+  ledger.record({
+    goalId: attempt.goalId,
+    goalTickId: attempt.goalTickId,
+    actionType: attempt.actionType,
+    outcome: attempt.governanceOutcome,
+  });
+}
+const governance = createGovernance(config, tickId, entityId, ledger);
+```

@@ -1,0 +1,186 @@
+---
+title: "Eve adapter"
+description: "createEveProactivity() — full API reference for the Eve integration."
+---
+
+```ts
+import { createEveProactivity } from "@refix/proactivity/eve";
+```
+
+**No peer dependencies.** The Eve runtime is present in the deployment environment; it is not imported.
+
+---
+
+## `createEveProactivity(config)`
+
+Creates an `EveProactivity` instance. Eve agents are single-entity processes; configure `entityId` explicitly.
+
+### Config
+
+<ParamField body="config.store" type="ProactivityStore" required>
+  The persistence store. Use `createPostgresStore` in production.
+</ParamField>
+
+<ParamField body="config.entityId" type="string" required>
+  The entity identifier for this Eve agent process.
+</ParamField>
+
+<ParamField body="config.state" type="EveStateSlot<EveTickState>" required>
+  A `defineState` slot of type `EveTickState | null`. The adapter stores serialized tick IDs (plain JSON) here so governance can be rebuilt per tool call across step boundaries.
+
+  ```ts
+  import { defineState } from "eve/context";
+  import type { EveTickState } from "@refix/proactivity/eve";
+
+  export const tickState = defineState<EveTickState | null>("proactivity.tick", () => null);
+  ```
+
+  Declare once; pass to `createEveProactivity`. The slot type must match exactly.
+</ParamField>
+
+<ParamField body="config.reflection" type="object" required>
+  Same shape as `proactive()` config `reflection`. `model` required.
+</ParamField>
+
+<ParamField body="config.goals" type="GoalSeed[]">
+  Seeded on first real wake (after the due-gate check in `onSessionStarted`).
+</ParamField>
+
+<ParamField body="config.cadence" type="object">
+  Same shape as `proactive()` config `cadence`. Defaults: `min: "15m"`, `max: "24h"`.
+</ParamField>
+
+<ParamField body="config.governance" type="object">
+  <Expandable title="governance">
+    <ParamField body="config.governance.maxActionsPerWake" type="number" default="10">
+      Hard cap on governed actions per wake.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="config.report" type="object">
+  <Expandable title="report">
+    <ParamField body="config.report.recentWakes" type="number" default="5">
+      Wakes shown verbatim in the wake report.
+    </ParamField>
+    <ParamField body="config.report.summarizeOlderWakes" type="boolean" default="false">
+      Enable rolling ledger fold.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+---
+
+## Returns: `EveProactivity`
+
+### `onSessionStarted()`
+
+`async () => Promise<void>`
+
+Hook body for `events["session.started"]`. Runs before any model turn:
+1. Closes any orphaned running tick as `failed` (crash recovery)
+2. Reads `nextScheduledTickAt` from the store — if before now, sets `state.due = false` and returns (due-gate)
+3. Opens a tick row, seeds goals, opens the primary goal-tick, populates `state` with serialized IDs
+
+Wire into Eve's `defineHook`:
+
+```ts
+export default defineHook({
+  events: {
+    "session.started": () => proactivity.onSessionStarted(),
+  },
+});
+```
+
+---
+
+### `briefingTool()`
+
+Returns an `EveToolDefinition<{}>` for the `get_briefing` tool.
+
+The tool checks `state.due`:
+- `due === false` → returns `{ due: false, briefing: "Not a due wake…" }` — the agent should do nothing and stop
+- `due === true` → returns `{ due: true, briefing: <rendered wake report> }`
+
+Always call this first in every session.
+
+---
+
+### `finishHeartbeatTool()`
+
+Returns an `EveToolDefinition<{ report: string }>` for the `finish_heartbeat` tool.
+
+The tool:
+1. Reads attempt rows from the store
+2. Assembles a transcript from those rows + the `report` argument
+3. Runs reflection (goal mutations, ledger entry, next wake time)
+4. Applies goal mutations to the store
+5. Closes the tick row; updates `nextScheduledTickAt` in the store
+6. Optionally folds the ledger if `summarizeOlderWakes` is true
+7. Clears `state` to `null`
+
+The `report` argument should be a complete, concrete summary of what the agent observed and did.
+
+<Warning>
+  Call `finish_heartbeat` exactly once, as the last action of every real wake. Calling it twice or not at all leaves the tick in an inconsistent state.
+</Warning>
+
+---
+
+### `governedTool<TArgs>(input)`
+
+Returns an `EveToolDefinition<TArgs>` that wraps a side-effecting action in the governance envelope.
+
+<ParamField body="input.description" type="string" required>
+  Tool description shown to the model.
+</ParamField>
+
+<ParamField body="input.inputSchema" type="ZodTypeAny" required>
+  Zod schema for the tool's arguments.
+</ParamField>
+
+<ParamField body="input.perform" type="function" required>
+  `(args: TArgs) => Promise<unknown> | unknown` — the actual side effect.
+</ParamField>
+
+<ParamField body="input.actionType" type="string" default='"action"'>
+  Audit and idempotency identifier. **Always set this** — the Eve tool filename is not visible here, so the default is not meaningful.
+</ParamField>
+
+<ParamField body="input.target" type="function">
+  `(args: TArgs) => Record<string, unknown>` — narrows the idempotency key.
+</ParamField>
+
+<ParamField body="input.reasoning" type="function">
+  `(args: TArgs) => string` — reasoning for the audit row.
+</ParamField>
+
+Returns `{ governanceOutcome, result? | note? }`. If `governanceOutcome` is `hard_denied` or `soft_cap_denied`, `note` carries the human-readable denial.
+
+---
+
+### `addGoal(goal, opts?)`
+
+`async (goal: GoalSeed, opts?: { wakeNext?: boolean }) => Promise<GoalRecord>`
+
+`opts.wakeNext = true` sets `nextScheduledTickAt` to now, so the next Eve cron firing passes the due-gate. Eve has no in-process scheduler to poke; this is the equivalent of `handle.wake()`.
+
+---
+
+### `completeGoal(goalId, reason?)`
+
+`async (goalId: string, reason?: string) => Promise<void>`
+
+---
+
+### `listGoals(filter?)`
+
+`async (filter?: { status?: GoalStatus[] }) => Promise<GoalRecord[]>`
+
+---
+
+### `scheduleMarkdown(extra?)`
+
+`(extra?: string) => string`
+
+Returns the recommended prompt markdown for your `schedules/` file. The text instructs the agent to call `get_briefing` first, check `due`, act only if due, and close with `finish_heartbeat`.

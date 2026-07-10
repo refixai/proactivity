@@ -1,0 +1,135 @@
+---
+title: "Context injection"
+description: "What the agent receives each wake: the wake report and its sections, plus agentInput for reshaping or replacing it."
+---
+
+Each wake, the agent receives an opening user message assembled at inject time. By default that message is the **wake report** — a rendered summary of goals and recent history. `agentInput` lets you reshape or replace it.
+
+## The wake report
+
+The report is assembled by the inject phase from data in the store, then handed to the adapter as the first message. It always contains the same five sections, in order. (In the console narrator it appears under the label "situation report".)
+
+**1. Header** — wake number, entity ID, current time, time since last wake (or "first wake"), and a note if the trigger was manual.
+
+```
+Wake #4 — acme/api — Mon 07 Jul 2026, 14:32 UTC
+Last wake: 47 minutes ago (scheduled)
+```
+
+**2. Standing goals** — every active or paused goal, in priority order. Each entry shows status, priority, objective, done-condition, and the goal's `findings` scratchpad (current state, open threads, next steps).
+
+**3. Recent wakes** — the last `report.recentWakes` wakes (default 5), newest first. Each shows that wake's ledger summary, every governed action with its `target → outcome`, and the next-wake reasoning reflection chose at the time.
+
+```
+Wake #3 (47m ago): quiet — no new issues, no PRs requiring attention
+  next wake in 47m — monitoring for activity
+```
+
+**4. Older wakes (rolling summary)** — present only when `report.summarizeOlderWakes` is `true` and the store holds a summary. See [Memory](/concepts/memory).
+
+**5. How to proceed** — a fixed behavioral contract, verbatim:
+
+> You woke on your own initiative. Acting is optional — a deliberate nothing is a good wake.
+> Never repeat an action the ledger already shows as taken unless something has materially changed.
+> If you act, use the tools available. If you don't, say why.
+
+This text is fixed. To change it, replace the whole message with `agentInput`.
+
+<Note>
+  The report is judgment-free by design. It carries facts: what changed, what goals are open, what previous wakes did. Whether those facts warrant action is the agent's call. What's new is a fact; what matters is a judgment.
+</Note>
+
+## Adjusting report depth
+
+Two knobs control how much history the report carries:
+
+```ts
+proactive(adapter, {
+  report: {
+    recentWakes: 10,           // default 5 — wakes shown verbatim
+    summarizeOlderWakes: true, // default false — fold aged-out wakes into a rolling summary
+  },
+  // ...
+});
+```
+
+`summarizeOlderWakes` costs one extra reflection call per wake once history exceeds the window. See [Memory](/concepts/memory) for the fold mechanics.
+
+## agentInput — reshaping the message
+
+`agentInput` controls the shape the adapter receives each wake. When it is not set, the adapter's `run` gets the rendered report as `input.message` (a plain string). When it is set, its return value is passed to the adapter as `input.custom`, and `input.message` still carries the rendered report for adapters that only read the string.
+
+`agentInput` receives the full `WakeContext` and may be async.
+
+### Add a system prompt
+
+Keep the report, wrap it in your own message array:
+
+```ts
+proactive(adapter, {
+  agentInput: (ctx) => ({
+    messages: [
+      { role: "system", content: "You are a GitHub monitor for the acme organization. Be terse." },
+      { role: "user", content: ctx.report }, // the rendered wake report
+    ],
+  }),
+  // ...
+});
+```
+
+### Add live context
+
+`ctx` carries goals, ledger, and timestamps. Load additional state and embed it alongside the report:
+
+```ts
+proactive(adapter, {
+  agentInput: async (ctx) => {
+    const account = await db.accounts.findById(ctx.entityId);
+    return {
+      messages: [
+        { role: "user", content: ctx.report },
+        { role: "user", content: `Current account status: ${JSON.stringify(account)}` },
+      ],
+    };
+  },
+  // ...
+});
+```
+
+### Replace the message entirely
+
+Return whatever the adapter's `run` expects, ignoring the report:
+
+```ts
+proactive(adapter, {
+  agentInput: (ctx) => buildMyOwnBriefing(ctx.goals, ctx.entityId),
+  // ...
+});
+```
+
+<Warning>
+  When you replace the report, section 5 — the "never repeat a ledger-shown action" contract — is no longer delivered. That constraint becomes yours to carry. If you drop it, the model has no reminder that repeating actions is wrong.
+</Warning>
+
+### WakeContext fields
+
+| Field | Type | Description |
+|---|---|---|
+| `entityId` | `string` | The entity being woken |
+| `tickId` | `string` | Unique ID for this tick |
+| `tickNumber` | `number` | Wake count for this entity |
+| `trigger` | `"scheduled" \| "manual"` | What caused this wake |
+| `now` | `Date` | Current timestamp |
+| `lastWakeAt` | `Date \| null` | When the entity last woke |
+| `goals` | `GoalRecord[]` | Active + paused goals |
+| `ledger` | `LedgerWake[]` | Recent wake summaries (up to `report.recentWakes`) |
+| `ledgerSummary` | `string \| null` | Rolling summary, when `summarizeOlderWakes` is on |
+| `report` | `string` | The rendered wake report |
+
+`shouldWake` receives a `ShouldWakeContext` — a subset without `report`, since the report has not been rendered yet at that point.
+
+## Related
+
+- [Goals](/concepts/goals) — the scratchpads shown in section 2
+- [Memory](/concepts/memory) — the ledger and rolling summary
+- [`proactive()` reference](/reference/proactive) — `report` and `agentInput` config

@@ -1,0 +1,122 @@
+---
+title: "proactive()"
+description: "Full config reference for the proactive() call."
+mode: "wide"
+---
+
+```ts
+import { proactive } from "@refix/proactivity";
+
+const handle = proactive(adapter, config);
+```
+
+## Parameters
+
+<ParamField body="adapter" type="ProactiveAgentAdapter" required>
+  The adapter that runs your agent each wake. Built-ins: `fromLangGraph`, `fromAnthropic`, `anthropicLoop`, `createEveProactivity`. Custom: `{ name: string; run(input: AgentRunInput): Promise<Transcript> }`.
+</ParamField>
+
+<ParamField body="config" type="ProactiveConfig" required>
+  Configuration object. All fields except `reflection.model` are optional.
+
+  <Expandable title="config fields">
+
+    <ParamField body="reflection" type="object" required>
+      <Expandable title="reflection">
+        <ParamField body="reflection.model" type="ReasoningModel" required>
+          The LLM for the SDK's reasoning step. Helpers: `langchainModel(chatModel)` from `/langgraph`, `anthropicModel(client, modelId)` from `/anthropic`. Interface: `{ generate(prompt, jsonSchema): Promise<unknown> }`.
+        </ParamField>
+        <ParamField body="reflection.instructions" type="object">
+          Free-text appended to matching prompt sections. Fields: `goals?`, `scheduling?`, `ledger?`. Does not replace the prompt — appends to each section.
+        </ParamField>
+        <ParamField body="reflection.prompt" type="function">
+          `(ctx: ReflectPromptContext) => string` — full prompt takeover. Output schema still enforced. Precedence: `run` > `prompt` > instructions > built-in.
+        </ParamField>
+        <ParamField body="reflection.run" type="function">
+          `(ctx: ReflectionRunContext) => Promise<unknown>` — full step takeover. Receives `store`, `defaultPrompt`, `schema`, and all `ReflectPromptContext` fields. Output still validated, clamped, and pinned-shielded. A throw degrades like a failed model call.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField body="goals" type="GoalSeed[]">
+      Seed goals, idempotent on stable `id` (derived from title slug if `id` not set). Seeded on `handle.start()`. `pinned` is reconciled if config changes it.
+
+      **Default:** one fallback pinned goal `"proactive-loop"` if no goals are provided.
+    </ParamField>
+
+    <ParamField body="cadence" type="object">
+      Wake timing bounds and defaults.
+
+      <Expandable title="cadence">
+        <ParamField body="cadence.min" type="Duration" default="15m">
+          Floor: reflection cannot schedule sooner than this. Accepts `"30s"`, `"1.5h"`, `"7d"`, or raw milliseconds.
+        </ParamField>
+        <ParamField body="cadence.max" type="Duration" default="24h">
+          Ceiling: reflection cannot schedule later than this.
+        </ParamField>
+        <ParamField body="cadence.default" type="Duration" default="cadence.min">
+          First wake delay + fallback when reflection degrades.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField body="store" type="ProactivityStore" default="createTestStore()">
+      Persistence backend. Default is in-memory and loses all state on restart. Use `createPostgresStore` in production.
+    </ParamField>
+
+    <ParamField body="schedule" type="SchedulerAdapter" default="createTimerAdapter()">
+      Wake scheduler. Default is in-process `setTimeout`. Use `createBullMQAdapter` in production.
+    </ParamField>
+
+    <ParamField body="governance" type="object">
+      <Expandable title="governance">
+        <ParamField body="governance.maxActionsPerWake" type="number" default="10">
+          Hard ceiling on governed actions per wake. Actions beyond this receive `hard_denied`.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField body="shouldWake" type="function">
+      `(ctx: ShouldWakeContext) => boolean | Promise<boolean>` — the only pre-model hook. Return `false` to skip the agent call. The tick is still recorded and the clock re-arms at `cadence.default`. May only answer "is this worth a model call?" — not pre-digest what matters.
+    </ParamField>
+
+    <ParamField body="agentInput" type="function">
+      `(ctx: WakeContext) => TCustom` — shapes what the adapter receives. Default: the rendered report is passed as `input.message`. When set, the return value is passed as `input.custom`; `ctx.report` still carries the rendered report. May be async.
+    </ParamField>
+
+    <ParamField body="report" type="object">
+      <Expandable title="report">
+        <ParamField body="report.recentWakes" type="number" default="5">
+          Number of past wakes shown verbatim in the wake report.
+        </ParamField>
+        <ParamField body="report.summarizeOlderWakes" type="boolean" default="false">
+          Fold aged-out wakes into a rolling AI summary. Requires one extra `reflection.model` call per wake. Batch-capped at 25 wakes per fold; failed folds retry next wake.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField body="observe" type="function | false">
+      `(event: ProactiveEvent) => void` — raw event stream. Omit for the default console narrator. Pass `false` to silence all output. Throwing observers are swallowed.
+    </ParamField>
+
+    <ParamField body="onError" type="function" default="console.error">
+      `(error: Error) => void` — called for infrastructure errors outside the main wake: scheduled-wake failures and ledger-fold failures. Does not receive errors inside a wake (those are handled inline).
+    </ParamField>
+
+  </Expandable>
+</ParamField>
+
+## Returns
+
+`ProactiveHandle` — see [Reference: handle](/reference/handle).
+
+## GoalSeed fields
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `title` | `string` | Yes | — | Name; derives stable `id` if `id` not set |
+| `objective` | `string` | Yes | — | What to achieve |
+| `doneCondition` | `string` | Yes | — | What "done" looks like |
+| `id` | `string` | No | title slug | Explicit stable id for idempotent seeding |
+| `priority` | `GoalPriority` | No | `"normal"` | `"critical" \| "high" \| "normal" \| "low"` |
+| `pinned` | `boolean` | No | `false` | Shields from reflection lifecycle mutations |
