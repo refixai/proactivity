@@ -1,0 +1,144 @@
+---
+title: "Reflection"
+description: "The SDK's own reasoning step: what it reads, what it produces, how output is validated, and how failures degrade."
+---
+
+Reflection is the SDK's structured-output call that runs after every wake, on *your* model, against the full transcript. It produces the ledger entry, goal mutations, and the next wake time. It is always on.
+
+## Why it's required config
+
+`reflection.model` is a required field. Reflection is what makes the ledger gapless, the goal scratchpads current, and the cadence self-adjusting. Without it, none of those three things work. Since you already have an LLM client, the requirement is not an extra provider — it's a second call on the same client you're already using for the agent.
+
+## What it reads
+
+- The full goal portfolio, with `findings` scratchpads and `[PINNED]` tags
+- The rendered transcript of the wake, per-item truncated:
+  - Tool call arguments: 600 chars
+  - Tool call results: 1,500 chars
+  - Model text (thinking, responses): 2,000 chars
+  - Whole-transcript budget: 24,000 chars, keeping the **tail** (recent turns take priority over early ones); every truncation is marked in-text
+- Three guidance sections with any `reflection.instructions` text appended
+- Cadence bounds in minutes
+
+The truncation limits are fixed. Long tool results are common; the tail-keeping strategy means recent tool calls are more likely to survive intact than early ones.
+
+## What it produces
+
+The output schema has four fields (`REFLECT_OUTPUT_SCHEMA` in the exports):
+
+| Field | Type | Description |
+|---|---|---|
+| `ledgerEntry` | `string` | One paragraph for the agent's future self: what it observed, what it did, what it deliberately skipped. Shown in the next wake's report. |
+| `goalMutations[]` | `object[]` | Lifecycle changes and scratchpad updates for any goal. Ops: `create`, `update`, `reprioritize`, `pause`, `complete`, `archive`. |
+| `nextWakeMinutes` | `number` | How many minutes until the next wake. Clamped to `[cadence.min, cadence.max]`. |
+| `nextWakeReasoning` | `string` | Why that cadence was chosen. Stored in the tick row; shown in the next wake's report. |
+
+## How output is validated
+
+Output is treated as hostile:
+
+1. **Schema enforced provider-side** — structured output is requested via the provider's native JSON schema constraint (not a prompt instruction).
+2. **Re-validated locally** — the SDK parses and validates the response against the same schema.
+3. **Cadence clamped** — `nextWakeMinutes` is clamped to `[cadence.min, cadence.max]` regardless of what the model returned.
+4. **Pinned shield applied** — mutations on pinned goals are filtered: only `update` (scratchpad) and `reprioritize` survive; any `status`-changing op is stripped.
+5. **Invalid mutations dropped** — each goal mutation is validated independently. An invalid mutation (unknown goal, illegal transition) is dropped with a warning; the rest apply.
+6. **`acted` derived from the store** — whether a wake "acted" comes from the attempt rows in the audit trail, not from the model's claim.
+
+## How failures degrade
+
+<Note>
+  A failing or throwing reflection call does not fail the wake. It degrades to safe defaults: the ledger entry records the failure reason, `nextWakeMinutes` defaults to `cadence.default`, and no goal mutations are applied. The tick still closes as `completed`.
+</Note>
+
+This means a transient provider outage during reflection produces a slightly less informative ledger entry and a default-cadence reschedule — not a lost wake.
+
+## Model guidance
+
+Reflection is one structured-output call with no tools. A smaller, cheaper model works. The prompt is designed for a capable-but-inexpensive model: it's prescriptive about format, it carries the goal portfolio and cadence bounds explicitly, and it does not require reasoning over the full transcript (truncation handles length).
+
+The helper `langchainModel(llm)` and `anthropicModel(client, modelId)` produce the `ReasoningModel` interface the SDK expects. You can reuse the same model as your agent or use a different one.
+
+## Steering reflection
+
+Reflection has three override layers, in escalation order. Start with `instructions`; reach for `run` only when you need to replace the reasoning step itself. Precedence is `run > prompt > instructions > built-in defaults`.
+
+| Layer | Signature | Use when |
+|---|---|---|
+| `reflection.instructions` | `{ goals?, scheduling?, ledger? }` | Product-specific guidance, appended to the default sections |
+| `reflection.prompt` | `(ctx) => string` | You need a different prompt structure; the output schema stays enforced |
+| `reflection.run` | `(ctx) => Promise<unknown>` | You need to replace the step: a sub-agent over the store, or an every-Nth-wake deep pass |
+
+Whatever these produce is still validated against the schema, clamped to the cadence bounds, and pinned-shielded. A throw degrades exactly like a failed model call.
+
+### Layer 1: instructions
+
+Append product-specific guidance to the three default prompt sections without touching the prompt structure. Each key is optional; the text is appended verbatim to the matching section.
+
+```ts
+proactive(adapter, {
+  reflection: {
+    model: langchainModel(llm),
+    instructions: {
+      goals: "When updating findings, always include the PR count and whether any are stale.",
+      scheduling: "Back off to 4h+ only when the last 3 wakes were all quiet.",
+      ledger: "Be concrete: name the PRs you checked, not just 'checked PRs'.",
+    },
+  },
+  // ...
+});
+```
+
+### Layer 2: prompt
+
+Full prompt takeover. The prompt function receives a `ReflectPromptContext` with everything the default builder gets. The output schema (`REFLECT_OUTPUT_SCHEMA`) is still enforced, clamping still applies, and the pinned shield still operates.
+
+```ts
+proactive(adapter, {
+  reflection: {
+    model: langchainModel(llm),
+    prompt: (ctx) => `
+You are reviewing a GitHub monitoring agent wake.
+Goals: ${JSON.stringify(ctx.goals)}
+Transcript: ${ctx.transcript}
+Cadence bounds: ${ctx.cadence.minMs}ms – ${ctx.cadence.maxMs}ms
+
+Produce a JSON object with: ledgerEntry, goalMutations, nextWakeMinutes, nextWakeReasoning.
+    `.trim(),
+  },
+  // ...
+});
+```
+
+### Layer 3: run
+
+Full step takeover. Replace the single model call with anything — a sub-agent over the store, a deep pass every Nth wake:
+
+```ts
+proactive(adapter, {
+  reflection: {
+    model: langchainModel(llm),
+    run: async (ctx) => {
+      // Deep pass every 10th wake:
+      if (ctx.context.tickNumber % 10 === 0) {
+        return await deepReflectionAgent.run({
+          store: ctx.store,
+          goals: ctx.goals,
+          transcript: ctx.transcript,
+        });
+      }
+      // Default for other wakes:
+      return await ctx.model.generate(ctx.defaultPrompt, ctx.schema);
+    },
+  },
+  // ...
+});
+```
+
+`ReflectionRunContext` carries `store` (live, for custom reads), `model`, `defaultPrompt` (the string the built-in builder would have used), `schema`, everything from `ReflectPromptContext` (`goals`, `transcript`, `cadence`, `pinnedGoalIds`, `instructions`), and `context` (the full `WakeContext`). Setting `run` disables `prompt` and `instructions` — you own the step.
+
+## Related
+
+- [Architecture](/concepts/architecture) — where reflection sits in the wake lifecycle
+- [Goals](/concepts/goals) — what goal mutations act on
+- [`proactive()` reference](/reference/proactive) — the `reflection` config
+- [Types reference](/reference/types) — `ReflectOutput`, `ReflectionRunContext`

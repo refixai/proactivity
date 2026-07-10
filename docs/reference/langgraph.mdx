@@ -1,0 +1,93 @@
+---
+title: "LangGraph adapter"
+description: "fromLangGraph(), governed(), langchainModel() — full API reference."
+---
+
+```ts
+import { fromLangGraph, governed, langchainModel } from "@refix/proactivity/langgraph";
+```
+
+**Peer deps:** `@langchain/core`, `zod`
+
+---
+
+## `fromLangGraph(graph, opts?)`
+
+Wraps any object with an `invoke()` method. Returns a `ProactiveAgentAdapter`.
+
+<ParamField body="graph" type="InvokableGraph" required>
+  Any compiled LangGraph graph or runnable with `invoke({ messages: [...] }): Promise<{ messages: BaseMessage[] }>`.
+</ParamField>
+
+<ParamField body="opts" type="FromLangGraphOptions">
+  <Expandable title="opts">
+    <ParamField body="opts.runName" type="string" default='"proactive-wake"'>
+      LangChain run name. Labels traces in LangSmith.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+**What it does:**
+- Calls `graph.invoke({ messages: [{ role: "user", content: situationReport }] }, { callbacks })` each wake
+- Records the transcript live via LangChain callbacks (all nodes, subgraphs, model calls, tool calls)
+- Sets `runName: "proactive-wake"` on the root run for LangSmith tracing
+
+---
+
+## `governed(tool, opts?)`
+
+Wraps a LangChain tool in the governance envelope. Returns a tool with the same `name`, `description`, and `schema`. Outside a wake, the tool is a transparent passthrough.
+
+<ParamField body="tool" type="StructuredTool" required>
+  Any `@langchain/core` tool (from `tool()` or a `StructuredTool` subclass).
+</ParamField>
+
+<ParamField body="opts" type="GovernedToolOptions">
+  <Expandable title="opts">
+    <ParamField body="opts.actionType" type="string" default="tool.name">
+      The action type string used for the idempotency key and audit trail.
+    </ParamField>
+    <ParamField body="opts.target" type="function">
+      `(args: TInput) => Record<string, unknown>` — narrows the idempotency target. Default: full args object. Narrowing to a subset of fields means two calls with the same target fields but different other fields deduplicate.
+    </ParamField>
+    <ParamField body="opts.reasoning" type="function">
+      `(args: TInput) => string` — produces the reasoning string for the audit row. Default: none.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+**Governance outcome as tool result:**
+
+The wrapped tool returns the governance outcome as its result, so the model sees `taken`, `hard_denied`, or `soft_cap_denied` in the tool call response and can re-plan accordingly.
+
+---
+
+## `langchainModel(llm, opts?)`
+
+Adapts a LangChain `BaseChatModel` to the `ReasoningModel` interface for use as `reflection.model`.
+
+<ParamField body="llm" type="BaseChatModel" required>
+  Any `@langchain/core` chat model that supports structured output via `.withStructuredOutput()`.
+</ParamField>
+
+<ParamField body="opts" type="object">
+  <Expandable title="opts">
+    <ParamField body="opts.runName" type="string" default='"proactive-reflection"'>
+      LangChain run name for reflection calls.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+---
+
+## `createTranscriptRecorder()`
+
+Lower-level: creates a LangChain callback handler that records the transcript. Used by `fromLangGraph` internally. Available if you need to record transcripts from non-LangGraph runnables.
+
+```ts
+import { createTranscriptRecorder } from "@refix/proactivity/langgraph";
+
+const recorder = createTranscriptRecorder();
+await myRunnable.invoke(input, { callbacks: [recorder] });
+const transcript = recorder.getTranscript();
+```

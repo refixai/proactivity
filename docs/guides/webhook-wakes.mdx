@@ -1,0 +1,59 @@
+---
+title: "Trigger wakes from events"
+description: "Wake an entity immediately from a webhook or user action instead of waiting for the next scheduled wake."
+---
+
+The scheduler fires wakes on a cadence. When an external event means the agent should look now — a webhook, a user action, an upstream change — `handle.wake(entityId)` runs a wake immediately. This guide covers the event-driven entry points and how they interact with scheduling.
+
+## Wake from a webhook
+
+`handle.wake(entityId)` runs one wake outside the scheduler cycle, then reflection picks the next scheduled wake exactly as it would after any wake:
+
+```ts
+app.post("/github/webhook", async (req, res) => {
+  const repo = req.body.repository.full_name; // e.g. "acme/api"
+  await handle.wake(repo);
+  res.sendStatus(200);
+});
+```
+
+Return your HTTP response promptly. If a wake can be slow, acknowledge the webhook first and let the wake run in the background rather than awaiting it inside the request handler.
+
+<Warning>
+  `handle.wake()` does not resurrect a stopped entity. If the entity was stopped with `handle.stop()`, `wake()` gives it exactly one look and does not re-arm the schedule. Call `handle.start()` to resume a stopped loop.
+</Warning>
+
+## Wake when adding a goal
+
+When a user action both creates a goal and warrants an immediate look — "watch this PR" — pass `{ wake: true }` to `addGoal`. It creates the goal (idempotently) and triggers a wake in one call:
+
+```ts
+await handle.addGoal(
+  "acme/api",
+  {
+    title: "Watch PR #847",
+    objective: "Alert #eng if this PR goes stale for 48h.",
+    doneCondition: "PR merged, closed, or assigned a reviewer.",
+  },
+  { wake: true },
+);
+```
+
+`addGoal` works even before `handle.start()` — it creates the entity state row if needed.
+
+## How a manual wake appears to the agent
+
+A manual wake is recorded with `trigger: "manual"`, and the wake report's header notes it. Otherwise it is an ordinary wake: the same report, the same reflection, the same rescheduling afterward. The agent decides whether the event warrants action using its own tools and the report — the SDK does not pass the event payload through. If the agent needs the payload, fetch it inside the agent (or thread it in via [`agentInput`](/concepts/context-injection)).
+
+## Bursts and duplicate events
+
+Webhooks arrive at unpredictable rates and providers retry. Two protections matter:
+
+- **Governed actions dedupe within a tick.** The idempotency key includes the tick, so an action already taken in a wake is `hard_denied` if attempted again. This is the crash-safe guarantee, not a cross-wake one.
+- **Debounce at the edge for bursty sources.** If one logical change fires many webhooks, coalesce them before calling `wake()` — for example, wake at most once per entity per short window. Each `wake()` runs a full wake, so unbounded calls mean unbounded model runs.
+
+## Related
+
+- [Scheduling](/concepts/scheduling) — `wake`, `stop`, and cadence
+- [Manage goals from your app](/guides/runtime-goals) — the goal runtime API
+- [Governance](/concepts/governance) — idempotency and outcomes

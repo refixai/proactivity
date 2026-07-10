@@ -1,0 +1,107 @@
+---
+title: "Custom stores and schedulers"
+description: "Implement ProactivityStore or SchedulerAdapter to run the loop on any database or queue backend."
+---
+
+The bundled Postgres store and BullMQ scheduler are implementations of two public interfaces. Implement them yourself to run the loop on any backend. If you only use the bundled adapters, you never touch these types.
+
+## ProactivityStore
+
+The store interface is the persistence extension point. It is exported from the root:
+
+```ts
+import type { ProactivityStore } from "@refix/proactivity";
+```
+
+Every method must be implemented. Grouped by concern:
+
+| Group | Methods |
+|---|---|
+| Entity state | `getState`, `upsertState`, `listSchedulableEntities` |
+| Ticks | `insertTick`, `updateTick`, `getLatestTick`, `getPreviousTickStartedAt`, `listRecentTicks`, `listTicksInRange` |
+| Goals | `listGoals`, `getGoal`, `applyGoalMutations` |
+| Goal ticks | `insertGoalTick`, `updateGoalTick`, `listGoalTicks` |
+| Attempts (audit) | `insertAttempt`, `markAttemptCompleted`, `markAttemptFailed`, `listAttempts`, `getRecentAttempts` |
+| Migrations | `migrate` |
+
+Goals are never created or patched field-by-field from outside: all goal lifecycle changes go through `applyGoalMutations(entityId, mutations)`, which enforces the status machine. The `Insert*` and `*Patch` types (e.g. `InsertTick`, `TickPatch`) are exported from the root and define the exact payload shapes.
+
+<Tip>
+  `createTestStore` (aka `memoryStore`) is a full in-memory implementation of this interface, and `createPostgresStore` is a SQL one. Reading either is the fastest way to see what each method must do.
+</Tip>
+
+<Note>
+  The interface does not include `end()`. The Postgres store adds it to close pools it owns; an implementer over a connectionless client (or a pool you manage elsewhere) does not need it. Migrations are your responsibility to define — the SDK calls `migrate()` at boot but never creates schema on its own.
+</Note>
+
+```ts
+import type { ProactivityStore } from "@refix/proactivity";
+
+export function createMyStore(client: MyClient): ProactivityStore {
+  return {
+    async getState(entityId) { /* ... */ },
+    async upsertState(entityId, patch) { /* ... */ },
+    async listSchedulableEntities() { /* entities with enabled = true */ },
+    async insertTick(insert) { /* returns InsertTickResult */ },
+    // ... implement every method above
+    async applyGoalMutations(entityId, mutations) { /* apply validated ops */ },
+    async migrate() { /* create tables if needed */ },
+  } as ProactivityStore;
+}
+```
+
+## SchedulerAdapter
+
+The scheduler interface drives the wake loop. Implement it to fire wakes from any queue, cron, or workflow engine:
+
+```ts
+import type { SchedulerAdapter } from "@refix/proactivity";
+```
+
+The interface is three methods:
+
+```ts
+type SchedulerAdapter = {
+  // Enqueue a wake for entityId, firing after delayMs. jobId identifies the job
+  // so it can be replaced/removed — an entity has at most one pending job.
+  enqueue(opts: { entityId: string; delayMs: number; jobId: string }): Promise<void>;
+
+  // Remove a previously enqueued job by its jobId.
+  remove(jobId: string): Promise<void>;
+
+  // Register the handler the adapter calls when a job fires. The scheduler wires
+  // this to run the wake; call it with the entityId of the fired job.
+  onFire(handler: (entityId: string) => void): void;
+};
+```
+
+<Warning>
+  An entity has at most one pending job at a time. The scheduler derives a stable `jobId` per entity and calls `remove` before `enqueue` when rescheduling. Your backend must make `enqueue` with a known `jobId` idempotent (upsert), and `remove` a no-op when the job is already gone.
+</Warning>
+
+### External-cron pattern
+
+For runtimes where an external cron drives wakes rather than delayed jobs, `enqueue` can persist the next wake time and leave firing to that cron, which calls `handle.wake(entityId)` when the time arrives:
+
+```ts
+export function createExternalCronAdapter(): SchedulerAdapter {
+  let onFire: (entityId: string) => void = () => {};
+  return {
+    async enqueue({ entityId, delayMs, jobId }) {
+      await db.schedules.upsert({ jobId, entityId, nextWakeAt: new Date(Date.now() + delayMs) });
+    },
+    async remove(jobId) {
+      await db.schedules.delete({ jobId });
+    },
+    onFire(handler) {
+      onFire = handler; // your cron process calls handle.wake(entityId) directly instead
+    },
+  };
+}
+```
+
+## Related
+
+- [Storage](/production/storage) — the bundled Postgres store
+- [Deployment](/production/deployment) — the bundled BullMQ scheduler
+- [Stores reference](/reference/stores) · [Schedulers reference](/reference/schedulers)

@@ -1,0 +1,62 @@
+---
+title: "Control cost"
+description: "What a wake costs in model calls, and the levers that reduce spend without losing the loop's value."
+---
+
+Each wake is the recurring cost of a proactive agent. This guide breaks down what a wake spends and the levers that reduce it, roughly in order of impact.
+
+## What a wake costs
+
+| Call | When |
+|---|---|
+| The agent run | Every wake that isn't skipped — one or more model calls, depending on your agent |
+| Reflection | Every wake that runs — exactly one structured-output call on `reflection.model` |
+| Ledger fold | Only when `report.summarizeOlderWakes` is on and wakes have aged out — one extra call |
+
+A skipped wake (`shouldWake` returned false) costs nothing: no agent run, no reflection. The agent run usually dominates, since it can loop over tool calls; reflection is a single call.
+
+## Cadence bounds
+
+Cadence is the biggest lever. Reflection already backs off when things are quiet, but the bounds cap how often a wake can happen at all:
+
+```ts
+cadence: { min: "1h", max: "24h" } // never more than hourly, even when busy
+```
+
+Raising `min` directly lowers the maximum wake frequency. Set it to the tightest loop the use case actually needs.
+
+## shouldWake as a pre-model gate
+
+`shouldWake` runs before any model call and can skip the wake entirely. Use it for a cheap check that decides whether a wake is worth a model run at all:
+
+```ts
+shouldWake: async (ctx) => {
+  // A cheap query — not substantive reasoning:
+  return await db.events.existsSince(ctx.entityId, ctx.lastWakeAt);
+},
+```
+
+<Warning>
+  `shouldWake` may only answer "is this worth a model call at all?" Keep it to a cheap availability check. Deciding *what matters* is the agent's job — moving that judgment into `shouldWake` replaces the model with brittle TypeScript. What's new is a fact; what matters is a judgment.
+</Warning>
+
+## A cheaper reflection model
+
+Reflection is one structured-output call with no tools, against a truncated transcript. A smaller model handles it well. Point `reflection.model` at a cheaper model than your agent uses:
+
+```ts
+reflection: { model: anthropicModel(client, "claude-haiku-4-5") }
+```
+
+This is often the easiest saving: the agent keeps its capable model, and the per-wake bookkeeping call gets a cheap one.
+
+## Report depth and the rolling summary
+
+- `report.recentWakes` (default 5) controls how many past wakes appear verbatim. Lowering it shrinks the agent's prompt on every wake.
+- `report.summarizeOlderWakes` adds long-term memory at the cost of one extra reflection call per wake once history exceeds the window. Turn it on only when the agent genuinely needs history older than the recent window; leave it off to save the call.
+
+## Related
+
+- [Scheduling](/concepts/scheduling) — cadence and `shouldWake`
+- [Reflection](/concepts/reflection) — the reflection call and cheaper models
+- [Memory](/concepts/memory) — the recent window and rolling summary

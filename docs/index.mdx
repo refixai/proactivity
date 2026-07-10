@@ -1,0 +1,23 @@
+---
+title: "Introduction"
+description: "The TypeScript SDK for proactive agents: durable wake scheduling, cross-wake goal memory, LLM-driven cadence, and idempotent action governance."
+---
+
+`@refix/proactivity` is a TypeScript SDK that turns an agent you already have into a proactive one. You wrap it in a single call; from then on the agent wakes on its own schedule, carries what it learned into the next wake, sets its own cadence within bounds you define, and routes side effects through a governance envelope that enforces idempotency and rate caps.
+
+The agent's reasoning, tools, and prompt do not change. The SDK briefs the agent before each wake, records what it does, and reflects afterward to update memory and choose the next wake time.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Wrap an agent and watch two wakes run — one quiet, one that acts.
+  </Card>
+  <Card title="Concepts" icon="book-open" href="/concepts/architecture">
+    The wake lifecycle, scheduling, goals, reflection, governance, and memory.
+  </Card>
+  <Card title="Integrations" icon="plug" href="/integrations/adapters">
+    Adapters for LangGraph, Anthropic, and Eve; plugins for OpenClaw and Hermes.
+  </Card>
+  <Card title="API reference" icon="code" href="/reference/proactive">
+    Every config key, handle method, adapter, and type.
+  </Card>
+</CardGroup>

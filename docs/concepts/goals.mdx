@@ -1,0 +1,95 @@
+---
+title: "Goals"
+description: "Goal anatomy, lifecycle, seeding from config, the pinned shield, and the runtime API."
+---
+
+Goals are the agent's durable missions. They persist across wakes, appear in every wake report, and accumulate a living `findings` scratchpad that reflection maintains. The agent never starts from nothing: it always knows what it's trying to do and what it last knew.
+
+## Anatomy
+
+| Field | Type | Description |
+|---|---|---|
+| `title` | `string` | Short name. Used to derive the stable `id` when no explicit id is given (slug of title). |
+| `objective` | `string` | What the agent is trying to achieve. Shown every wake. |
+| `doneCondition` | `string` | What "done" looks like. Reflection uses this to decide whether to propose completion. |
+| `priority` | `"critical" \| "high" \| "normal" \| "low"` | Default `"normal"`. Goals are shown in priority order. Reflection can reprioritize. |
+| `pinned` | `boolean` | Default `false`. Pinned goals are shielded from reflection's lifecycle mutations — see below. |
+| `id` | `string` (optional) | Explicit stable id. If omitted, the stable id is derived from the title slug. |
+| `findings` | `string` (runtime) | The per-goal scratchpad. Set by reflection after each wake. Not a seed field. |
+
+## Seeding from config
+
+Goals declared in `config.goals` are seeded idempotently on `handle.start()`. Idempotency is keyed on the stable `id` (explicit, or derived from `title`). Re-deploying with the same goals is a no-op; changing the title changes the id and creates a new goal.
+
+```ts
+goals: [
+  {
+    title: "Keep #eng on top of acme/api",  // id: "keep-eng-on-top-of-acme-api"
+    objective: "Post when something needs a human; stay silent otherwise.",
+    doneCondition: "Standing goal — never done; keep watching.",
+    pinned: true,
+  },
+]
+```
+
+If you set `pinned: true` in the seed and the persisted goal has `pinned: false`, the value is reconciled on next start. The reverse is also true.
+
+## Lifecycle
+
+```
+active → paused → active   (reflection proposes; transitions are validated)
+active → completed
+active → archived
+paused → archived
+```
+
+Reflection proposes mutations; the SDK validates them before applying. Invalid transitions (e.g. completing an already-completed goal, mutating a terminal goal) are dropped individually with warnings, not applied partially.
+
+## The pinned shield
+
+A pinned goal cannot be completed, paused, or archived by reflection. Reflection may still:
+- Update the goal's `findings` scratchpad
+- Reprioritize the goal
+
+<Warning>
+  The pinned shield applies to reflection, not to you. `handle.completeGoal(entityId, goalId)` works on pinned goals. Use it when the user explicitly stops caring about a standing watch. Reflection cannot override this call.
+</Warning>
+
+`pinned` is a developer-only attribute. It can be set in config seeds and via `handle.addGoal()`. Reflection output that includes `pinned: true` is silently stripped — the model cannot pin a goal.
+
+## The `findings` scratchpad
+
+Every active goal carries a `findings` field maintained by reflection. It is a free-text scratchpad covering the goal's current state, open threads, and next steps — the per-goal memory that makes wake #20 aware of what wake #3 noticed.
+
+Reflection's `update` mutation replaces the scratchpad in full each wake. The rendered report shows the current scratchpad for every goal, so the agent always has its own notes in front of it.
+
+## Runtime API
+
+### `handle.addGoal(entityId, goal, opts?)`
+
+Create a goal outside the config seed flow. Idempotent on stable id. Safe to call before `handle.start()` — it creates the entity state row if needed.
+
+```ts
+await handle.addGoal("acme/api", {
+  title: "Watch PR #847",
+  objective: "Alert #eng if this PR goes stale for 48h.",
+  doneCondition: "PR merged, closed, or assigned a reviewer.",
+});
+
+// Trigger an immediate look:
+await handle.addGoal("acme/api", goal, { wake: true });
+```
+
+### `handle.completeGoal(entityId, goalId, reason?)`
+
+Complete a goal, including pinned ones. Throws if the goal doesn't exist or is already terminal.
+
+### `handle.listGoals(entityId, filter?)`
+
+Read the goal list directly. Accepts an optional `{ status: GoalStatus[] }` filter.
+
+## Related
+
+- [Reflection](/concepts/reflection) — how goal mutations are produced and validated
+- [Context injection](/concepts/context-injection) — how goals appear in the wake report
+- [Handle reference](/reference/handle) — `addGoal`, `completeGoal`, `listGoals`

@@ -1,0 +1,96 @@
+---
+title: "Deployment"
+description: "Swap the in-process timer for BullMQ, wire the boot sequence, and run the loop across multiple replicas."
+---
+
+In production the store holds everything — goals, ledger, audit trail, and schedule state — so the process is disposable. Deployment is two changes from the quickstart: a durable scheduler, and a boot sequence that re-arms the loop after a restart.
+
+## Scheduler adapters
+
+| Adapter | Subpath | When to use |
+|---|---|---|
+| `createTimerAdapter` | `@refix/proactivity/timer` | Development: `setTimeout`-based, zero deps, in-process |
+| `createBullMQAdapter` | `@refix/proactivity/bullmq` | Production: Redis-backed, durable, survives restarts |
+
+When `schedule` is omitted, the default is `createTimerAdapter`. It works for local runs and tests but does not survive process restarts.
+
+## BullMQ
+
+```bash
+pnpm add bullmq
+```
+
+```ts
+import { proactive } from "@refix/proactivity";
+import { createBullMQAdapter } from "@refix/proactivity/bullmq";
+
+const handle = proactive(adapter, {
+  schedule: createBullMQAdapter({
+    queueName: "proactive-wakes",
+    connection: {
+      host: process.env.REDIS_HOST ?? "localhost",
+      port: Number(process.env.REDIS_PORT ?? 6379),
+    },
+  }),
+  // ...
+});
+```
+
+<Note>
+  BullMQ uses **delayed jobs**, not cron. Each wake re-enqueues the next one with a delay equal to the reflected cadence. Missed wakes fire once on reconnect, not once per missed interval: if the process was down for 3h with a 30m cadence, you see one missed-wake burst, not six.
+</Note>
+
+## Boot sequence
+
+Run these three steps in order on every process start:
+
+<Steps>
+  <Step title="Migrate the store">
+    ```ts
+    await store.migrate(); // idempotent; safe on every boot
+    ```
+  </Step>
+  <Step title="Construct the handle">
+    ```ts
+    const handle = proactive(adapter, { store, schedule, reflection, goals, cadence });
+    ```
+  </Step>
+  <Step title="Resume">
+    ```ts
+    await handle.resume(); // re-arm every entity the store says should be running
+    ```
+    `resume()` re-enqueues every entity where `enabled = true`. Stopped entities (`enabled = false`) are left alone. Each entity fires at most once per call, regardless of how many ticks it missed.
+  </Step>
+</Steps>
+
+<Check>
+  After `resume()`, missed-wake logs appear as your entities catch up. If nothing fires, confirm the store has entities with `enabled = true` and that the BullMQ worker connected to Redis.
+</Check>
+
+## Running multiple replicas
+
+The store is the source of truth, so multiple replicas can run the same handle:
+
+- **`stop()` is authoritative.** It flips `enabled` in the store; every replica stops firing that entity once the store reflects the change.
+- **The queue dedupes firing.** BullMQ delivers each delayed job to one worker. Two replicas do not both wake the same entity for the same scheduled tick.
+- **`wake()` during normal operation** re-arms via reflection like any other wake — it is the webhook entry point, not a scheduler bypass.
+
+## Failure routing
+
+| What fails | Where it lands |
+|---|---|
+| A scheduled wake's infrastructure (queue, connection) | `onError(error, entityId)` |
+| The agent throws during a wake | Tick recorded as `failed`; `onError` called; next wake at `cadence.default` |
+| Reflection or the ledger fold throws | Degrades; the wake still completes (fold retries next wake) |
+
+`onError` defaults to `console.error`. Set it to route background infrastructure errors into your own alerting. The tick records its own run failures in the store regardless.
+
+## Custom schedulers
+
+To drive wakes from a queue or cron other than BullMQ, implement `SchedulerAdapter`. See [Custom stores and schedulers](/guides/custom-stores-and-schedulers) for the full interface and a worked example.
+
+## Related
+
+- [Storage](/production/storage) — the durable store the schedule lives in
+- [Ship to production](/guides/ship-to-production) — the end-to-end migration walkthrough
+- [Schedulers reference](/reference/schedulers) — `createBullMQAdapter` and `SchedulerAdapter`
