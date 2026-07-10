@@ -19,7 +19,7 @@
         "groups": [
           {
             "group": "Get started",
-            "pages": ["index", "quickstart", "installation"]
+            "pages": ["index", "quickstart", "installation", "integrations/adapters"]
           },
           {
             "group": "Concepts",
@@ -34,20 +34,25 @@
             ]
           },
           {
-            "group": "Integrations",
-            "pages": [
-              "integrations/adapters",
-              "integrations/eve",
-              "integrations/openclaw",
-              "integrations/hermes"
-            ]
-          },
-          {
             "group": "Production",
             "pages": [
               "production/storage",
               "production/deployment",
               "production/observability"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Plugins",
+        "groups": [
+          {
+            "group": "Plugins",
+            "pages": [
+              "plugins/overview",
+              "plugins/eve",
+              "plugins/openclaw",
+              "plugins/hermes"
             ]
           }
         ]
@@ -115,9 +120,12 @@
     { "source": "/frameworks/langgraph", "destination": "/integrations/adapters" },
     { "source": "/frameworks/anthropic", "destination": "/integrations/adapters" },
     { "source": "/frameworks/custom", "destination": "/guides/custom-adapter" },
-    { "source": "/frameworks/eve", "destination": "/integrations/eve" },
-    { "source": "/platforms/openclaw", "destination": "/integrations/openclaw" },
-    { "source": "/platforms/hermes", "destination": "/integrations/hermes" },
+    { "source": "/frameworks/eve", "destination": "/plugins/eve" },
+    { "source": "/platforms/openclaw", "destination": "/plugins/openclaw" },
+    { "source": "/platforms/hermes", "destination": "/plugins/hermes" },
+    { "source": "/integrations/eve", "destination": "/plugins/eve" },
+    { "source": "/integrations/openclaw", "destination": "/plugins/openclaw" },
+    { "source": "/integrations/hermes", "destination": "/plugins/hermes" },
     { "source": "/production/persistence", "destination": "/production/storage" },
     { "source": "/production/scheduling", "destination": "/production/deployment" },
     { "source": "/advanced/custom-stores-and-schedulers", "destination": "/guides/custom-stores-and-schedulers" },
