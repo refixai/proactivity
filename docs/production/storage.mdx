@@ -1,0 +1,89 @@
+---
+title: "Storage"
+description: "Swap the in-memory default for Postgres so goals, the ledger, and the schedule survive process restarts."
+---
+
+<Snippet file="snippets/memory-store-warning.mdx" />
+
+## Install
+
+```bash
+pnpm add pg
+```
+
+`pg` is the only peer dependency for `@refix/proactivity/postgres`.
+
+## Connect and migrate
+
+```ts
+import { proactive } from "@refix/proactivity";
+import { createPostgresStore } from "@refix/proactivity/postgres";
+
+const store = createPostgresStore({ connectionString: process.env.DATABASE_URL });
+
+// Run once on boot — idempotent and safe to call on every restart:
+await store.migrate();
+
+const handle = proactive(adapter, {
+  store,
+  // ...
+});
+```
+
+`migrate()` creates `proactivity_*`-prefixed tables in whichever database and `search_path` the connection points at, alongside your own tables. No migration tool or separate schema file required.
+
+<Tip>
+  Call `migrate()` at boot time (before your server starts accepting traffic). It's safe to call in parallel from multiple processes — the migrations are named and idempotent: `001_initial`, `002_pinned_and_ledger_summary`. A migration that's already applied is a no-op.
+</Tip>
+
+## Using an existing pool
+
+If your app already manages a `pg.Pool`, pass it directly. The SDK will use it and never close it:
+
+```ts
+import { Pool } from "pg";
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Anywhere else in your app:
+pool.on("error", (err) => console.error("pool error", err));
+
+const store = createPostgresStore({ pool }); // SDK uses your pool; you manage it
+```
+
+When the SDK created the pool (via `connectionString`), `store.end()` closes it. When you passed a pool, `store.end()` is a no-op — your pool is yours to close.
+
+## Tables
+
+The SDK creates five tables, all `proactivity_*`-prefixed:
+
+| Table | Contents |
+|---|---|
+| `proactivity_state` | Per-entity: `enabled`, `lastTickAt`, `nextScheduledTickAt`, `ledgerSummary`, `ledgerSummaryThroughTick` |
+| `proactivity_ticks` | Wake rows: number, trigger, status, timestamps, counts, `cadenceHintMs`, `cadenceReasoning`, error |
+| `proactivity_goals` | Goal fields: title, objective, doneCondition, findings scratchpad, nextActions, status, priority, `pinned`, `lastWorkedAt` |
+| `proactivity_goal_ticks` | Wake↔goal join: `acted`, `summary` (reflection's ledger entry) |
+| `proactivity_attempts` | Audit trail: actionType, idempotencyKey, outcome, reasoning, denial/override reason, target, payload, error |
+
+These tables sit in your schema alongside your own. You can query them for dashboards, analytics, or debugging — they are stable and public.
+
+## Restoring after a restart
+
+In production the store is authoritative: `handle.resume()` reads the store and re-arms every entity that should be running:
+
+```ts
+// At startup, after migrate():
+await handle.resume();
+```
+
+`resume()` re-enqueues all entities where `enabled = true` and `nextScheduledTickAt` is in the past or near future. Entities that were stopped (`enabled = false`) are not re-armed.
+
+<Check>
+  After calling `resume()` you should see missed wake logs appear as your entities catch up. Each entity fires at most once per call, regardless of how many ticks it missed.
+</Check>
+
+## Related
+
+- [Deployment](/production/deployment) — the durable scheduler and the restart runbook
+- [Custom stores and schedulers](/guides/custom-stores-and-schedulers) — implement your own backend
+- [Stores reference](/reference/stores) — `createPostgresStore` and the `ProactivityStore` interface

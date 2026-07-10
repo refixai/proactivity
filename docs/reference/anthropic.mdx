@@ -1,0 +1,103 @@
+---
+title: "Anthropic adapter"
+description: "fromAnthropic(), anthropicLoop(), anthropicModel() — full API reference."
+---
+
+```ts
+import { fromAnthropic, anthropicLoop, anthropicModel } from "@refix/proactivity/anthropic";
+```
+
+**No peer dependencies.** The Anthropic client is passed in at runtime.
+
+---
+
+## `fromAnthropic(opts)`
+
+Wraps your hand-rolled loop. The SDK hands your `run` function a traced client with an identical surface. Returns a `ProactiveAgentAdapter`.
+
+<ParamField body="opts.client" type="AnthropicClientLike" required>
+  An Anthropic client (or any object with a compatible `messages.create` surface). The SDK wraps it in a `Proxy` to record each call; no peer dep is imported.
+</ParamField>
+
+<ParamField body="opts.run" type="function" required>
+  `(ctx: AnthropicRunContext) => Promise<void>` — your loop. Receives:
+  - `ctx.client` — a traced proxy over `opts.client` with the same surface
+  - `ctx.message` — the rendered wake report (opening user message)
+  - `ctx.context` — the full `WakeContext`
+  - `ctx.custom` — the output of `agentInput`, if set
+  - `ctx.observe` — optional: call with an event to emit live narration
+</ParamField>
+
+The transcript is assembled from intercepted `messages.create` calls on the traced client. Your loop doesn't return anything; the SDK captures what it needs from the calls.
+
+---
+
+## `anthropicLoop(opts)`
+
+SDK-owned tool-use loop. The SDK calls the model, executes tools, and feeds results back. Returns a `ProactiveAgentAdapter`.
+
+<ParamField body="opts.client" type="AnthropicClientLike" required>
+  Anthropic client.
+</ParamField>
+
+<ParamField body="opts.model" type="string" required>
+  Model ID, e.g. `"claude-opus-4-8"`.
+</ParamField>
+
+<ParamField body="opts.tools" type="LoopTool[]" required>
+  Tool definitions. Each tool has:
+  - `name: string`
+  - `description: string`
+  - `input_schema: object` — JSON schema
+  - `execute: (args: unknown) => Promise<unknown>` — the tool's implementation
+  - `governed?: boolean | GovernedOptions` — opt-in to the governance envelope
+
+  `governed: true` is shorthand for `governed: { actionType: tool.name, target: (args) => args }`.
+
+  `GovernedOptions`:
+  - `actionType?: string` — default: tool name
+  - `target?: (args) => Record<string, unknown>` — default: full args
+  - `reasoning?: (args) => string`
+</ParamField>
+
+<ParamField body="opts.system" type="string">
+  System prompt. Applied to every `messages.create` call in the loop.
+</ParamField>
+
+<ParamField body="opts.maxTurns" type="number" default="12">
+  Maximum number of model turns before the loop stops.
+</ParamField>
+
+<ParamField body="opts.maxTokens" type="number" default="4096">
+  `max_tokens` passed to each `messages.create` call.
+</ParamField>
+
+---
+
+## `anthropicModel(client, modelId)`
+
+Adapts an Anthropic client to the `ReasoningModel` interface for use as `reflection.model`.
+
+<ParamField body="client" type="AnthropicClientLike" required>
+  Anthropic client.
+</ParamField>
+
+<ParamField body="modelId" type="string" required>
+  Model ID for the structured-output reflection call.
+</ParamField>
+
+---
+
+## `AnthropicClientLike`
+
+The interface the SDK checks at runtime:
+
+```ts
+interface AnthropicClientLike {
+  messages: {
+    create(params: object): Promise<object>;
+  };
+}
+```
+
+Any `@anthropic-ai/sdk` client satisfies this. You can pass a traced client (e.g. `wrapAnthropic(new Anthropic())`) directly.

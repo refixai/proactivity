@@ -1,0 +1,79 @@
+---
+title: "OpenClaw"
+description: "A plugin that adds governance, durable goals, and cadence to OpenClaw agents. Governs every outbound message by default."
+---
+
+`@refix/proactivity-openclaw` is an [OpenClaw](https://github.com/openclaw/openclaw) plugin that adds the governance envelope, durable goals, and a `set_cadence` tool to your existing agent. No `proactive()` call — the plugin integrates with OpenClaw's hook and tool system.
+
+Unlike a Python framework, OpenClaw is TypeScript, so this plugin runs the SDK's actual governance in-process: `createGovernance` and `createLedger` are imported and reused verbatim. The governance behavior is identical to what first-class adapters provide.
+
+## Install
+
+<Tabs>
+  <Tab title="Agent-assisted (recommended)">
+    Paste this into your OpenClaw agent:
+
+    <Prompt description="Install and enable the proactivity plugin in OpenClaw" actions={["copy"]}>
+    Install and enable the proactivity plugin: run `openclaw plugins install npm:@refix/proactivity-openclaw`, then `openclaw plugins enable proactivity`. Confirm both commands succeeded.
+    </Prompt>
+
+    The agent runs both commands and confirms.
+  </Tab>
+  <Tab title="Manual">
+    ```bash
+    openclaw plugins install npm:@refix/proactivity-openclaw
+    openclaw plugins enable proactivity
+    ```
+  </Tab>
+</Tabs>
+
+Enabling registers three tools and two hooks:
+
+**Tools:** `goal`, `briefing`, `set_cadence`
+
+**Hooks:**
+
+| Hook | What it governs |
+|---|---|
+| `message_sending` | All outbound text: proactive sends and replies. Rewrite or cancel before it reaches Slack/Telegram/etc. |
+| `before_tool_call` | Only the side-effecting tools you list in `governedTools` (default: none, so reads and filesystem tools aren't rate-limited). |
+
+Governance works by interception, not name-shadowing. The agent calls its native send; the hook routes it through the envelope and returns a denial the agent can see if it's blocked.
+
+<Check>
+  After enabling, your agent should have access to `goal`, `briefing`, and `set_cadence` tools. Run `openclaw tools list` to verify.
+</Check>
+
+## Configuration
+
+Under `plugins.entries.proactivity.config` in `openclaw.json`:
+
+| Key | Default | Description |
+|---|---|---|
+| `perTickCap` | `5` | Max actions per tick bucket before the cap denies further ones |
+| `governedTools` | `[]` | Extra tool names to gate via `before_tool_call`. Outbound messages are always governed. |
+| `tickSeconds` | `60` | Width of a tick bucket — scope of the per-tick cap and idempotency. |
+| `recentContactThreshold` | `3` | Soft cap: hold a send after this many recent contacts to the same recipient. |
+| `dryRun` | `false` | Record actions as `pending_approval` without performing them. |
+| `failClosed` | `false` | If governance itself errors, block the action instead of letting it through. |
+| `sessionKey` | none | Session to route proactive cron ticks into. |
+| `dbPath` | `~/.openclaw/proactivity.json` | JSON store location. |
+
+## Limitations (honest)
+
+<AccordionGroup>
+  <Accordion title="Cadence rides the openclaw cron CLI">
+    A workspace plugin can't call `scheduleSessionTurn` — it's hard-gated to bundled plugins and returns `undefined` for third-party ones. `set_cadence` shells out to `openclaw cron add`. It returns a clear error if the CLI isn't reachable. A native scheduling primitive for third-party plugins is the one upstream ask.
+  </Accordion>
+  <Accordion title="Ticks are time buckets, not turns">
+    The per-tick cap and idempotency are scoped to the `tickSeconds` window, not to a single OpenClaw session or turn. Fine for a personal agent; upgrade to session-scoped ticks if you need exact per-turn semantics.
+  </Accordion>
+  <Accordion title="Governance fails open by default">
+    If the governance envelope itself errors (e.g. the store file is unavailable), the action proceeds — matching OpenClaw's resilient posture. Set `failClosed: true` to invert: a governance error blocks the action instead.
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [Hermes](/integrations/hermes) — the equivalent plugin for Python agents
+- [Governance](/concepts/governance) — the envelope this plugin reuses in-process

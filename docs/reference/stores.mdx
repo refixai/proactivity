@@ -1,0 +1,87 @@
+---
+title: "Stores"
+description: "ProactivityStore interface, createPostgresStore, and createTestStore."
+---
+
+## `ProactivityStore` interface
+
+The store is the extension point for persistence. All bundled stores and the Eve adapter implement this interface.
+
+```ts
+import type { ProactivityStore } from "@refix/proactivity";
+```
+
+The interface's methods, grouped by concern:
+
+| Group | Methods |
+|---|---|
+| Entity state | `getState`, `upsertState`, `listSchedulableEntities` |
+| Ticks | `insertTick`, `updateTick`, `getLatestTick`, `getPreviousTickStartedAt`, `listRecentTicks`, `listTicksInRange` |
+| Goals | `listGoals`, `getGoal`, `applyGoalMutations` |
+| Goal ticks | `insertGoalTick`, `updateGoalTick`, `listGoalTicks` |
+| Attempts | `insertAttempt`, `markAttemptCompleted`, `markAttemptFailed`, `listAttempts`, `getRecentAttempts` |
+| Migrations | `migrate` |
+
+Goals are mutated only through `applyGoalMutations` (which enforces the status machine), not field-by-field. The `Insert*` and `*Patch` payload types are exported from `@refix/proactivity`.
+
+<Note>
+  `end()` is **not** part of the interface. The Postgres store adds it to close pools it owns (see below); `createTestStore` and connectionless implementations do not need it.
+</Note>
+
+---
+
+## `createPostgresStore(opts)`
+
+Production store backed by Postgres. Ships five `proactivity_*`-prefixed tables and two named idempotent migrations.
+
+```ts
+import { createPostgresStore } from "@refix/proactivity/postgres";
+```
+
+**Peer dep:** `pg`
+
+<ParamField body="opts.connectionString" type="string">
+  Postgres connection string. The SDK creates and owns the pool.
+</ParamField>
+
+<ParamField body="opts.pool" type="pg.Pool">
+  An existing `pg.Pool`. The SDK uses it and never closes it. Mutually exclusive with `connectionString`.
+</ParamField>
+
+One of `connectionString` or `pool` must be provided.
+
+### Methods
+
+#### `store.migrate()`
+
+Creates the five `proactivity_*` tables in the current database/schema. Named migrations: `001_initial`, `002_pinned_and_ledger_summary`. Idempotent — safe to call on every boot.
+
+#### `store.end()`
+
+Closes the pool if the SDK created it (via `connectionString`). No-op if you passed a pool.
+
+### Tables
+
+| Table | Contents |
+|---|---|
+| `proactivity_state` | `enabled`, `lastTickAt`, `nextScheduledTickAt`, `ledgerSummary`, `ledgerSummaryThroughTick` |
+| `proactivity_ticks` | Wake rows: number, trigger, status, timestamps, counts, cadence hint/reasoning, error |
+| `proactivity_goals` | title, objective, doneCondition, findings, nextActions, status, priority, `pinned`, `lastWorkedAt` |
+| `proactivity_goal_ticks` | wake↔goal join: `acted`, `summary` |
+| `proactivity_attempts` | Audit: actionType, idempotencyKey, outcome, reasoning, denial/override reason, target, payload, error |
+
+---
+
+## `createTestStore()` / `memoryStore()`
+
+In-memory store for development and tests. Both names are exported and identical.
+
+```ts
+import { createTestStore, memoryStore } from "@refix/proactivity";
+```
+
+Implements the full `ProactivityStore` interface. State is lost on process exit.
+
+<Warning>
+  Do not use `createTestStore` in production. Goals, the ledger, and the audit trail are not persisted.
+</Warning>

@@ -1,0 +1,378 @@
+---
+title: "Quickstart"
+description: "Wrap an agent in one call, then watch it wake on its own schedule and reflect after every run."
+---
+
+By the end of this page you have a proactive agent running locally: it wakes on a schedule, decides whether to act, and picks its own next wake time. The tabs cover the three first-class integrations — LangGraph and Anthropic wrap an agent with `proactive()`; Eve wires into its own runtime instead.
+
+## Before you begin
+
+- Node.js 20 or later.
+- A model client your agent and reflection can call. The examples use Anthropic's `claude-opus-4-8`, so set `ANTHROPIC_API_KEY`.
+- The SDK, plus the peers for your integration:
+  - **LangGraph** — `@langchain/core` and `zod`
+  - **Anthropic** — `@anthropic-ai/sdk`
+  - **Eve** — none (the Eve runtime is already present in your deployment)
+
+<Snippet file="snippets/install.mdx" />
+
+<Snippet file="snippets/memory-store-warning.mdx" />
+
+## Build it
+
+<Tabs>
+  <Tab title="LangGraph">
+    <Steps>
+      <Step title="Start from the agent you have">
+        A ReAct agent that reads a GitHub repo and posts to `#eng`. It is reactive: it runs when you call it, returns, and does nothing until called again.
+
+        ```ts
+        import { ChatAnthropic } from "@langchain/anthropic";
+        import { createReactAgent } from "@langchain/langgraph/prebuilt";
+
+        const llm = new ChatAnthropic({ model: "claude-opus-4-8" });
+
+        const agent = createReactAgent({
+          llm,
+          tools: [listIssues, listPullRequests, postToSlack],
+          prompt: "You watch a GitHub repo and keep #eng informed.",
+        });
+        ```
+
+        Its reasoning, tools, and prompt stay exactly as they are.
+      </Step>
+
+      <Step title="Wrap it">
+        Two imports, one structural change (`governed()` on the outbound tool), one call:
+
+        ```ts
+        import { proactive } from "@refix/proactivity";
+        import { fromLangGraph, governed, langchainModel } from "@refix/proactivity/langgraph";
+
+        const agent = createReactAgent({
+          llm,
+          tools: [listIssues, listPullRequests, governed(postToSlack)], // ← the one change
+          prompt: "You watch a GitHub repo and keep #eng informed.",
+        });
+
+        const handle = proactive(fromLangGraph(agent), {
+          // Your own LLM — it powers the SDK's reflection step (bookkeeping + pacing).
+          reflection: { model: langchainModel(llm) },
+          goals: [
+            {
+              title: "Keep #eng on top of acme/api",
+              objective:
+                "Each wake, check issues and PRs against what previous wakes reported. " +
+                "Post to #eng when something needs a human: a new bug report, a PR stale " +
+                "for 3+ days, a thread going in circles. Stay silent otherwise.",
+              doneCondition: "Standing goal — never done; keep watching.",
+              pinned: true, // reflection can't close this goal — only you can
+            },
+          ],
+          cadence: { min: "15m", max: "24h" }, // reflection picks the next wake inside this window
+        });
+
+        await handle.start("acme/api"); // first wake after cadence.default (= min: 15 minutes)
+        ```
+
+        `governed()` wraps the tool in the governance envelope — idempotency, caps, and an audit row — without changing its name, description, or schema.
+
+        <Note>
+          For the first local run, use a short cadence so you see the loop without waiting: `cadence: { min: "30s", max: "2m" }`. Restore real bounds before you deploy.
+        </Note>
+
+        `handle.wake("acme/api")` triggers an immediate wake from outside the loop — the webhook entry point.
+      </Step>
+
+      <Step title="Watch it run">
+        Two wakes, four hours apart:
+
+        ```
+        [proactive:acme/api] wake #1 (scheduled) — 1 goal
+        [proactive:acme/api] ⚙ list_issues {"repo":"acme/api"}
+        [proactive:acme/api] 💭 Nothing changed since the last look. No post warranted.
+        [proactive:acme/api] ✎ quiet repo, 14 open issues, nothing new — next wake in 4h
+        [proactive:acme/api] wake #1 done — next wake at 6:12 PM
+
+                ····· four hours later ·····
+
+        [proactive:acme/api] wake #2 (scheduled) — 1 goal, last wake 4h ago
+        [proactive:acme/api] ⚙ list_issues {"repo":"acme/api"}
+        [proactive:acme/api] 💭 Two new bug reports, one looks P0. #eng should know.
+        [proactive:acme/api] ✔ post_to_slack — taken
+        [proactive:acme/api] ✎ escalated 2 new bugs to #eng — next wake in 30m (watch for movement)
+        [proactive:acme/api] wake #2 done (acted) — next wake at 6:47 PM
+        ```
+
+        Wake 1: nothing new, so reflection backed off toward the 24h ceiling and recorded why. Wake 2: two bug reports, one P0 — the agent posted to #eng, updated the goal scratchpad, and tightened to 30m to watch for follow-up.
+
+        The `⚙ 💭 ✔ ✎` lines are the default console narrator. Route the raw event stream to your own logger with `observe: (event) => …`, or silence it with `observe: false`.
+      </Step>
+    </Steps>
+
+    <Check>
+      You should see `[proactive:acme/api] wake #1` within one cadence cycle. If nothing appears, confirm `ANTHROPIC_API_KEY` is set and that the first `await handle.start(...)` resolved without throwing.
+    </Check>
+  </Tab>
+
+  <Tab title="Anthropic">
+    <Steps>
+      <Step title="Start from the agent you have">
+        An agent that reads a GitHub repo and posts to `#eng`, built on the Anthropic Messages API. It is reactive: it runs when you call it, returns, and does nothing until called again.
+
+        ```ts
+        import Anthropic from "@anthropic-ai/sdk";
+
+        const client = new Anthropic(); // reads ANTHROPIC_API_KEY
+
+        // The three tools your agent calls — two reads and one write.
+        const listIssuesTool = {
+          name: "list_issues",
+          description: "List open issues on the repo.",
+          input_schema: { type: "object", properties: {}, required: [] },
+          execute: async () => listIssues(),
+        };
+        const listPullRequestsTool = {
+          name: "list_pull_requests",
+          description: "List open pull requests on the repo.",
+          input_schema: { type: "object", properties: {}, required: [] },
+          execute: async () => listPullRequests(),
+        };
+        const postToSlackTool = {
+          name: "post_to_slack",
+          description: "Post a message to #eng.",
+          input_schema: {
+            type: "object",
+            properties: { text: { type: "string" } },
+            required: ["text"],
+          },
+          execute: async ({ text }: { text: string }) => postToSlack(text),
+        };
+
+        const system = "You watch a GitHub repo and keep #eng informed.";
+        ```
+
+        Its reasoning, tools, and prompt stay exactly as they are.
+      </Step>
+
+      <Step title="Wrap it">
+        Two imports, one structural change (`governed: true` on the outbound tool), one call. `anthropicLoop` owns the call → execute → feed-results cycle for you:
+
+        ```ts
+        import { proactive } from "@refix/proactivity";
+        import { anthropicLoop, anthropicModel } from "@refix/proactivity/anthropic";
+
+        const handle = proactive(
+          anthropicLoop({
+            client,
+            model: "claude-opus-4-8",
+            system,
+            tools: [
+              listIssuesTool,
+              listPullRequestsTool,
+              { ...postToSlackTool, governed: true }, // ← the one change
+            ],
+          }),
+          {
+            // Your own client — it powers the SDK's reflection step (bookkeeping + pacing).
+            reflection: { model: anthropicModel(client, "claude-opus-4-8") },
+            goals: [
+              {
+                title: "Keep #eng on top of acme/api",
+                objective:
+                  "Each wake, check issues and PRs against what previous wakes reported. " +
+                  "Post to #eng when something needs a human: a new bug report, a PR stale " +
+                  "for 3+ days, a thread going in circles. Stay silent otherwise.",
+                doneCondition: "Standing goal — never done; keep watching.",
+                pinned: true, // reflection can't close this goal — only you can
+              },
+            ],
+            cadence: { min: "15m", max: "24h" }, // reflection picks the next wake inside this window
+          },
+        );
+
+        await handle.start("acme/api"); // first wake after cadence.default (= min: 15 minutes)
+        ```
+
+        `governed: true` routes the tool through the governance envelope — idempotency, caps, and an audit row — without changing its name, description, or schema. A hand-rolled loop with `fromAnthropic` instead calls `governedPerform` directly; see [Adapters](/integrations/adapters).
+
+        <Note>
+          For the first local run, use a short cadence so you see the loop without waiting: `cadence: { min: "30s", max: "2m" }`. Restore real bounds before you deploy.
+        </Note>
+
+        `handle.wake("acme/api")` triggers an immediate wake from outside the loop — the webhook entry point.
+      </Step>
+
+      <Step title="Watch it run">
+        Two wakes, four hours apart. The console narrator is adapter-agnostic — the output matches the LangGraph run:
+
+        ```
+        [proactive:acme/api] wake #1 (scheduled) — 1 goal
+        [proactive:acme/api] ⚙ list_issues {"repo":"acme/api"}
+        [proactive:acme/api] 💭 Nothing changed since the last look. No post warranted.
+        [proactive:acme/api] ✎ quiet repo, 14 open issues, nothing new — next wake in 4h
+        [proactive:acme/api] wake #1 done — next wake at 6:12 PM
+
+                ····· four hours later ·····
+
+        [proactive:acme/api] wake #2 (scheduled) — 1 goal, last wake 4h ago
+        [proactive:acme/api] ⚙ list_issues {"repo":"acme/api"}
+        [proactive:acme/api] 💭 Two new bug reports, one looks P0. #eng should know.
+        [proactive:acme/api] ✔ post_to_slack — taken
+        [proactive:acme/api] ✎ escalated 2 new bugs to #eng — next wake in 30m (watch for movement)
+        [proactive:acme/api] wake #2 done (acted) — next wake at 6:47 PM
+        ```
+
+        Wake 1: nothing new, so reflection backed off toward the 24h ceiling and recorded why. Wake 2: two bug reports, one P0 — the agent posted to #eng, updated the goal scratchpad, and tightened to 30m to watch for follow-up.
+
+        The `⚙ 💭 ✔ ✎` lines are the default console narrator. Route the raw event stream to your own logger with `observe: (event) => …`, or silence it with `observe: false`.
+      </Step>
+    </Steps>
+
+    <Check>
+      You should see `[proactive:acme/api] wake #1` within one cadence cycle. If nothing appears, confirm `ANTHROPIC_API_KEY` is set and that the first `await handle.start(...)` resolved without throwing.
+    </Check>
+  </Tab>
+
+  <Tab title="Eve">
+    Eve is a durable-workflow runtime that owns sessions and scheduling, so there is **no `proactive()` call** and no `handle`. `createEveProactivity()` returns hook and tool factories you wire into Eve. Same store, goals, reflection, and governance underneath.
+
+    <Steps>
+      <Step title="Configure proactivity">
+        Create a shared module for the instance. Eve agents are single-entity processes, so set `entityId` explicitly:
+
+        ```ts
+        // agent/proactivity.ts
+        import { createEveProactivity } from "@refix/proactivity/eve";
+        import { memoryStore } from "@refix/proactivity";
+        import { anthropicModel } from "@refix/proactivity/anthropic";
+        import { defineState } from "eve/context";
+        import type { EveTickState } from "@refix/proactivity/eve";
+        import Anthropic from "@anthropic-ai/sdk";
+
+        const client = new Anthropic();
+
+        // Functions don't serialize across Eve steps, so this slot holds plain JSON ids.
+        export const tickState = defineState<EveTickState | null>("proactivity.tick", () => null);
+
+        export const proactivity = createEveProactivity({
+          store: memoryStore(), // swap createPostgresStore in production
+          entityId: "acme/api",
+          state: tickState,
+          reflection: { model: anthropicModel(client, "claude-opus-4-8") },
+          goals: [
+            {
+              title: "Keep #eng on top of acme/api",
+              objective:
+                "Each wake, check issues and PRs against what previous wakes reported. " +
+                "Post to #eng when something needs a human. Stay silent otherwise.",
+              doneCondition: "Standing goal — never done; keep watching.",
+              pinned: true,
+            },
+          ],
+          cadence: { min: "15m", max: "24h" },
+        });
+        ```
+      </Step>
+
+      <Step title="Wire it into Eve">
+        Four files. Eve turns filenames into tool names, so save them at the paths shown.
+
+        ```ts
+        // agent/hooks/open-tick.ts — opens the tick, seeds goals, applies the due-gate
+        import { defineHook } from "eve/hooks";
+        import { proactivity } from "../proactivity.js";
+
+        export default defineHook({
+          events: { "session.started": () => proactivity.onSessionStarted() },
+        });
+        ```
+
+        ```ts
+        // agent/tools/get_briefing.ts — call first; returns { due, briefing }
+        import { defineTool } from "eve/tools";
+        import { proactivity } from "../proactivity.js";
+
+        export default defineTool(proactivity.briefingTool());
+        ```
+
+        ```ts
+        // agent/tools/finish_heartbeat.ts — call last, once; runs reflection, schedules next wake
+        import { defineTool } from "eve/tools";
+        import { proactivity } from "../proactivity.js";
+
+        export default defineTool(proactivity.finishHeartbeatTool());
+        ```
+
+        ```ts
+        // agent/schedules/proactive-wake.ts — polling floor; real cadence is set by reflection
+        import { defineSchedule } from "eve/schedules";
+        import { proactivity } from "../proactivity.js";
+
+        export default defineSchedule({
+          cron: "*/30 * * * *",
+          prompt: proactivity.scheduleMarkdown(),
+        });
+        ```
+
+        Wrap each side-effecting tool with `governedTool` — the same envelope `governed()` provides on other adapters:
+
+        ```ts
+        // agent/tools/post_to_slack.ts
+        import { defineTool } from "eve/tools";
+        import { proactivity } from "../proactivity.js";
+        import { z } from "zod";
+
+        export default defineTool(
+          proactivity.governedTool({
+            description: "Post a message to #eng.",
+            inputSchema: z.object({ text: z.string() }),
+            actionType: "post_to_slack", // always set — the filename isn't visible here
+            perform: async (args) => { await postToSlack(args.text); },
+          }),
+        );
+        ```
+      </Step>
+
+      <Step title="Watch it run">
+        Eve's cron fires every 30 minutes — the polling floor, not the wake cadence. Each session the agent calls `get_briefing` first:
+
+        - **`due === false`** — not a real wake. The agent does nothing and stops. Most cron firings land here.
+        - **`due === true`** — the agent gets the wake report, works the goals, routes any post through the governed tool, and calls `finish_heartbeat` once. That runs reflection, applies goal mutations, and sets the next real wake inside your cadence bounds.
+
+        `proactivity.addGoal(goal, { wakeNext: true })` marks the entity due so the next cron firing becomes a real wake — Eve's equivalent of `handle.wake()`.
+      </Step>
+    </Steps>
+
+    <Check>
+      The agent calls `get_briefing` first in every session, acts only when `due === true`, and closes with exactly one `finish_heartbeat`.
+    </Check>
+
+    <Warning>
+      Eve exposes no session transcript API, so reflection reasons over the agent's `finish_heartbeat` self-report plus the real governed-action audit rows — the ledger rows are ground truth. See [Eve](/integrations/eve) for the full setup and this fidelity note.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Compare the adapters" icon="plug" href="/integrations/adapters">
+    The full LangGraph, Anthropic, and custom-loop setups side by side.
+  </Card>
+  <Card title="Ship to production" icon="rocket" href="/guides/ship-to-production">
+    Swap the in-memory store for Postgres and BullMQ so the loop survives restarts.
+  </Card>
+  <Card title="How a wake runs" icon="diagram-project" href="/concepts/architecture">
+    The four phases: inject → run → reflect → schedule.
+  </Card>
+  <Card title="Govern actions" icon="shield" href="/concepts/governance">
+    Idempotency, caps, outcomes, and why denials return in-band.
+  </Card>
+</CardGroup>
+
+## Related
+
+- [Installation](/installation) — subpaths and peer dependencies
+- [Architecture](/concepts/architecture) — how the loop is structured
+- [`proactive()` reference](/reference/proactive) — every config key

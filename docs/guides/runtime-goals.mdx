@@ -1,0 +1,52 @@
+---
+title: "Manage goals from your app"
+description: "Create, complete, and list goals at runtime — the API behind a user clicking watch this or unwatch."
+---
+
+Goals seeded in config cover the standing missions an entity always has. When goals come from user actions instead — "watch this repo", "stop watching" — use the handle's goal API. This guide covers the runtime flows.
+
+## Create a goal when a user opts in
+
+`handle.addGoal(entityId, goal, opts?)` creates a goal at runtime. It is idempotent on the goal's stable id (explicit `id`, or a slug of the title), so handling the same click twice does not create two goals:
+
+```ts
+// User clicks "watch acme/api":
+await handle.addGoal("acme/api", {
+  title: "Keep #eng on top of acme/api",
+  objective: "Post to #eng when something needs a human. Stay silent otherwise.",
+  doneCondition: "Standing goal — never done; keep watching.",
+  pinned: true, // a user-created standing watch — reflection can't close it
+});
+```
+
+Pin goals that represent an explicit, standing user choice. Reflection can evolve a pinned goal's scratchpad and reprioritize it, but only your code — a user clicking "unwatch" — can complete it. Leave `pinned` off for goals the agent should be free to finish on its own.
+
+`addGoal` works before `handle.start()`; it creates the entity state row if it doesn't exist yet. Pass `{ wake: true }` to also look immediately — see [Trigger wakes from events](/guides/webhook-wakes).
+
+## Complete a goal when a user opts out
+
+`handle.completeGoal(entityId, goalId, reason?)` completes a goal, including pinned ones — the pinned shield binds reflection, not you:
+
+```ts
+// User clicks "unwatch":
+await handle.completeGoal("acme/api", "keep-eng-on-top-of-acme-api", "user unwatched");
+```
+
+It throws if the goal doesn't exist or is already terminal, so surface those as user-facing errors or guard with `listGoals` first.
+
+## Drive UI from the goal list
+
+`handle.listGoals(entityId, filter?)` reads goals directly for rendering state — which watches are active, what each is tracking:
+
+```ts
+const active = await handle.listGoals("acme/api", { status: ["active"] });
+// Render: title, objective, and findings (the live scratchpad) per goal.
+```
+
+Each goal's `findings` scratchpad is the agent's living summary of that goal — useful to show the user what the agent currently knows.
+
+## Related
+
+- [Goals](/concepts/goals) — anatomy, lifecycle, and the pinned shield
+- [Trigger wakes from events](/guides/webhook-wakes) — `addGoal({ wake: true })`
+- [Handle reference](/reference/handle) — full method signatures

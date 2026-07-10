@@ -1,0 +1,143 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "@refix/proactivity",
+  "colors": {
+    "primary": "#111827",
+    "light": "#A5B4FC",
+    "dark": "#6366F1"
+  },
+  "logo": {
+    "light": "/logo/refix-logo.png",
+    "dark": "/logo/refix-logo.png"
+  },
+  "favicon": "/logo/refix-favicon.png",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": ["index", "quickstart", "installation"]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/scheduling",
+              "concepts/context-injection",
+              "concepts/goals",
+              "concepts/reflection",
+              "concepts/governance",
+              "concepts/memory"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/adapters",
+              "integrations/eve",
+              "integrations/openclaw",
+              "integrations/hermes"
+            ]
+          },
+          {
+            "group": "Production",
+            "pages": [
+              "production/storage",
+              "production/deployment",
+              "production/observability"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/ship-to-production",
+              "guides/webhook-wakes",
+              "guides/runtime-goals",
+              "guides/cost-control",
+              "guides/custom-adapter",
+              "guides/custom-stores-and-schedulers",
+              "guides/primitives"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": ["resources/examples", "resources/faq"]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Core",
+            "pages": [
+              "reference/proactive",
+              "reference/handle",
+              "reference/events",
+              "reference/types"
+            ]
+          },
+          {
+            "group": "Adapters",
+            "pages": [
+              "reference/langgraph",
+              "reference/anthropic",
+              "reference/eve"
+            ]
+          },
+          {
+            "group": "Infrastructure",
+            "pages": ["reference/stores", "reference/schedulers"]
+          },
+          {
+            "group": "Primitives",
+            "pages": ["reference/primitives"]
+          }
+        ]
+      }
+    ]
+  },
+  "redirects": [
+    { "source": "/philosophy", "destination": "/concepts/architecture" },
+    { "source": "/concepts/wake-pipeline", "destination": "/concepts/architecture" },
+    { "source": "/concepts/cadence", "destination": "/concepts/scheduling" },
+    { "source": "/concepts/situation-report", "destination": "/concepts/context-injection" },
+    { "source": "/advanced/agent-input", "destination": "/concepts/context-injection" },
+    { "source": "/advanced/reflection-overrides", "destination": "/concepts/reflection" },
+    { "source": "/frameworks/langgraph", "destination": "/integrations/adapters" },
+    { "source": "/frameworks/anthropic", "destination": "/integrations/adapters" },
+    { "source": "/frameworks/custom", "destination": "/guides/custom-adapter" },
+    { "source": "/frameworks/eve", "destination": "/integrations/eve" },
+    { "source": "/platforms/openclaw", "destination": "/integrations/openclaw" },
+    { "source": "/platforms/hermes", "destination": "/integrations/hermes" },
+    { "source": "/production/persistence", "destination": "/production/storage" },
+    { "source": "/production/scheduling", "destination": "/production/deployment" },
+    { "source": "/advanced/custom-stores-and-schedulers", "destination": "/guides/custom-stores-and-schedulers" },
+    { "source": "/advanced/primitives", "destination": "/guides/primitives" }
+  ],
+  "navbar": {
+    "links": [
+      { "label": "GitHub", "href": "https://github.com/refixai/proactivity" }
+    ],
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/refixai/proactivity"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/refixai/proactivity"
+    }
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude"]
+  }
+}

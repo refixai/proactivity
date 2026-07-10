@@ -1,0 +1,81 @@
+---
+title: "Hermes"
+description: "A Python plugin that adds governance, durable goals, and cadence to Hermes agents. Governance is opt-in; you name your outbound tools."
+---
+
+`proactivity-hermes` is a [Hermes](https://hermes-agent.nousresearch.com) plugin that adds the governance envelope, durable goals, and a `set_cadence` tool to your existing Hermes agent. Hermes already provides the agent loop, memory, gateways, and scheduler. This plugin layers governance and goals on top of that machinery — an adapter, not a second framework.
+
+It complements Hermes's `MEMORY.md` (facts) and Skills (procedures); it doesn't replace them.
+
+## Install
+
+<Tabs>
+  <Tab title="Agent-assisted (recommended)">
+    Paste this into your Hermes agent:
+
+    <Prompt description="Install and enable the proactivity plugin in Hermes" actions={["copy"]}>
+    Install and enable the proactivity plugin: run `pip install proactivity-hermes`, then `hermes plugins enable proactivity`. Confirm both commands succeeded.
+    </Prompt>
+
+    The agent runs both commands and confirms.
+  </Tab>
+  <Tab title="Manual">
+    ```bash
+    pip install proactivity-hermes
+    hermes plugins enable proactivity
+    ```
+  </Tab>
+</Tabs>
+
+Enabling registers three tools (`goal`, `briefing`, `set_cadence`) and a `tool_execution` middleware. Naming your outbound tools in `PROACTIVITY_GOVERNED_TOOLS` wraps their calls in the governance envelope.
+
+<Check>
+  After enabling, your agent should have access to `goal`, `briefing`, and `set_cadence`. Verify with `hermes tools list`.
+</Check>
+
+## How governance is applied
+
+| Concern | Mechanism |
+|---|---|
+| New tools | `ctx.register_tool(..., toolset="proactivity")` |
+| Govern outbound | `ctx.register_middleware("tool_execution", …)` wrapping the tools in `PROACTIVITY_GOVERNED_TOOLS` |
+| Cadence | `cron.create_job` — same scheduler `hermes cron` uses |
+| Storage | Private SQLite at `~/.hermes/proactivity.db` |
+
+Governance is **interception, not name-shadowing**. The agent calls a tool it already has; the middleware routes that call through the envelope transparently. An allowed call passes through; a denied call returns a denial result the agent can read.
+
+## Configuration
+
+Set via environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `PROACTIVITY_PER_TICK_CAP` | `5` | Max actions taken per tick before the cap denies further ones |
+| `PROACTIVITY_GOVERNED_TOOLS` | _(none)_ | Comma-separated tool names to govern. Empty by default. Set to your agent's real outbound tools, e.g. `discord,feishu_drive_reply_comment`. |
+| `PROACTIVITY_TICK_SECONDS` | `60` | Width of a tick bucket; scope of the per-tick cap and idempotency |
+| `PROACTIVITY_RECENT_CONTACT_THRESHOLD` | `2` | Soft cap: hold a send after this many recent contacts to the same recipient |
+| `PROACTIVITY_DRY_RUN` | `false` | Record actions as `pending_approval` instead of performing them |
+| `PROACTIVITY_FAIL_CLOSED` | `false` | If governance itself errors, block the tool call instead of letting it through |
+| `PROACTIVITY_ENTITY_ID` | `hermes` | Governance scope. For a single personal agent, leave as-is. |
+
+## Limitations (honest)
+
+<AccordionGroup>
+  <Accordion title="Cadence is minute-granular">
+    Hermes's cron ticks on a 60-second floor. Sub-minute cadence isn't expressible; the SDK's cadence control is only first-class on infrastructure Refix controls.
+  </Accordion>
+  <Accordion title="Ticks are time buckets, not turns">
+    The per-tick cap and idempotency are scoped to a `PROACTIVITY_TICK_SECONDS` window, not to a Hermes session or turn. Sufficient for a personal agent; upgrade to session-scoped ticks for exact per-turn semantics.
+  </Accordion>
+  <Accordion title="Governance fails open by default">
+    If the envelope itself errors, the action proceeds — matching Hermes's own middleware posture. Set `PROACTIVITY_FAIL_CLOSED=true` to invert.
+  </Accordion>
+  <Accordion title="Governance is opt-in; you name your outbound tools">
+    `PROACTIVITY_GOVERNED_TOOLS` is empty by default. Stock Hermes does not expose a `send_message` tool to the model (a turn's reply is the response itself, not a tool call), so there is no safe default to govern. Only you know which tool your agent sends through. The plugin warns at the first tool flow if a configured name isn't a registered tool.
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [OpenClaw](/integrations/openclaw) — the equivalent plugin for TypeScript agents
+- [Governance](/concepts/governance) — the envelope this plugin applies as middleware

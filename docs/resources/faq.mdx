@@ -1,0 +1,66 @@
+---
+title: "FAQ"
+description: "Common questions and gotchas."
+---
+
+<AccordionGroup>
+  <Accordion title="What happens if the agent crashes mid-wake?">
+    The tick row is left with status `running`. On the next `handle.resume()` call (or on the next `onSessionStarted` for Eve), the SDK detects the open running tick and closes it as `failed`. The ledger records the failure. The next wake fires at `cadence.default`.
+
+    For governed actions that were in-flight: the idempotency key was claimed before the action executed, so a retry will find `hard_denied: duplicate` and block the repeat. If the action was *not* executed (crash between claim and send), the denial still blocks — you'll need to call the tool again with a new tick or override with `overrideReason`.
+  </Accordion>
+
+  <Accordion title="Why does the first wake not happen immediately?">
+    The first wake fires after `cadence.default`, which defaults to `cadence.min`. Set `cadence: { min: "30s" }` for fast local iteration. Restore real bounds before deploying. Call `handle.wake(entityId)` to trigger an immediate wake at any time.
+  </Accordion>
+
+  <Accordion title="Can I add goals before calling handle.start()?">
+    Yes. `handle.addGoal(entityId, goal)` creates the entity state row if it doesn't exist. Goals added before `start()` are present from the first wake.
+  </Accordion>
+
+  <Accordion title="What happens if I call handle.stop() and then handle.wake()">
+    `handle.wake()` on a stopped entity gives it exactly one look without re-arming the schedule. The loop does not resurrect. To restart the loop, call `handle.start()`.
+  </Accordion>
+
+  <Accordion title="Can reflection complete a pinned goal?">
+    No. The pinned shield strips any `complete`, `pause`, or `archive` mutation on a pinned goal. Only `update` (scratchpad) and `reprioritize` survive. Use `handle.completeGoal(entityId, goalId)` to close a pinned goal from your app code.
+  </Accordion>
+
+  <Accordion title="Why is the transcript truncated in reflection?">
+    The reflection prompt has a 24k character budget for the full transcript. Individual items are truncated first (tool args: 600 chars, tool results: 1,500 chars, model text: 2,000 chars), then the whole transcript is tail-kept if still over budget. Truncations are marked in-text so reflection knows data was cut. This is why reflection is reliable even for long, tool-heavy wakes.
+  </Accordion>
+
+  <Accordion title="Does governed() affect the tool outside a wake?">
+    No. Outside a wake, `governed()` is a transparent passthrough. The tool runs normally with no governance overhead. You can wrap all your side-effecting tools unconditionally.
+  </Accordion>
+
+  <Accordion title="Can I use a different model for reflection than for the agent?">
+    Yes. Set `reflection: { model: langchainModel(cheaperModel) }` or `reflection: { model: anthropicModel(client, "claude-haiku-4-5") }`. A cheaper, smaller model works well for reflection — the prompt is prescriptive about format, and the model doesn't need to reason over long contexts.
+  </Accordion>
+
+  <Accordion title="What is the difference between the ledger entry and the goal findings scratchpad?">
+    The **ledger entry** is per-wake: what happened this wake across all goals. It's chronological. The **findings scratchpad** is per-goal: the current state of one goal's pursuit. It accumulates as reflection updates it each wake. Both appear in the wake report: the scratchpad for each goal in "Standing goals," and ledger entries in "Recent wakes."
+  </Accordion>
+
+  <Accordion title="Why does Eve not use proactive()?">
+    Eve is a durable-workflow runtime that owns sessions and scheduling. `proactive()` assumes an in-process scheduler (timer or BullMQ) and a per-process `AsyncLocalStorage` tick scope. Eve's sessions are managed by the runtime, not by an in-process timer. `createEveProactivity()` builds on the same store and governance primitives but wires into Eve's hook and tool system instead.
+  </Accordion>
+
+  <Accordion title="What does 'the ledger is a view, not a table' mean?">
+    There is no `proactivity_ledger` table. What you see in the wake report as "the ledger" is assembled from tick rows, goal-tick summary rows, and attempt rows at read time. You can query these tables directly via `handle.store` — they're stable and public.
+  </Accordion>
+
+  <Accordion title="Is it safe to run handle.resume() in multiple processes?">
+    Yes. `resume()` reads the store and re-arms entities. If two processes call it simultaneously, the second will find jobs already enqueued (for BullMQ) or no-op (for the timer). No duplicate wakes: each entity has at most one pending job in the queue.
+  </Accordion>
+
+  <Accordion title="Why does the report say 'acting is optional'?">
+    A proactive agent that acts every wake regardless of what it sees is an alarm that cries wolf. The behavioral contract ("a deliberate nothing is a good wake") is in the report to counter the model's instinct to always produce output. Quiet wakes are correct wakes when there's nothing new.
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [Architecture](/concepts/architecture) — the wake lifecycle and invariants
+- [Control cost](/guides/cost-control) — what a wake spends and how to reduce it
+- [Examples](/resources/examples) — runnable, compile-checked reference agents

@@ -1,0 +1,125 @@
+---
+title: "Events"
+description: "The ProactiveEvent stream — all event types, their fields, and when they fire."
+---
+
+The event stream is consumed via the `observe` config option:
+
+```ts
+proactive(adapter, {
+  observe: (event: ProactiveEvent) => {
+    myLogger.info({ event });
+  },
+});
+```
+
+Events fire in order within a wake. Observers receive raw events; the default console narrator formats them for humans.
+
+## Wake lifecycle events
+
+### `wake_started`
+
+Fires at the beginning of every wake attempt.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `"wake_started"` | |
+| `entityId` | `string` | |
+| `tickId` | `string` | |
+| `tickNumber` | `number` | |
+| `trigger` | `"scheduled" \| "manual"` | |
+| `now` | `Date` | |
+
+---
+
+### `wake_completed`
+
+Fires when a wake finishes successfully.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `"wake_completed"` | |
+| `entityId` | `string` | |
+| `tickId` | `string` | |
+| `acted` | `boolean` | True if any governed action was `taken` or `soft_cap_overridden` |
+| `nextWakeAt` | `Date` | When the next wake is scheduled |
+| `nextWakeReasoning` | `string` | Reflection's explanation |
+
+---
+
+### `wake_skipped`
+
+Fires when `shouldWake` returned false.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `"wake_skipped"` | |
+| `entityId` | `string` | |
+| `tickId` | `string` | |
+| `reason` | `string` | Always `"shouldWake returned false"` |
+
+---
+
+### `wake_failed`
+
+Fires when the agent or infrastructure throws during a wake.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `"wake_failed"` | |
+| `entityId` | `string` | |
+| `tickId` | `string` | |
+| `error` | `Error` | The thrown error |
+
+---
+
+## Agent events
+
+### `agent_event`
+
+Fires live during the RUN moment. The adapter emits these as the agent executes.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `"agent_event"` | |
+| `entityId` | `string` | |
+| `kind` | `"tool_call" \| "tool_result" \| "model_output" \| "model_thinking"` | |
+| `name` | `string?` | Tool name (for `tool_call` / `tool_result`) |
+| `args` | `unknown?` | Tool arguments (for `tool_call`) |
+| `result` | `unknown?` | Tool result (for `tool_result`) |
+| `content` | `string?` | Model text (for `model_output` / `model_thinking`) |
+
+---
+
+## Governance events
+
+### `governance_outcome`
+
+Fires for every governed action dispatch.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `"governance_outcome"` | |
+| `entityId` | `string` | |
+| `actionType` | `string` | |
+| `target` | `Record<string, unknown>` | |
+| `outcome` | `GovernanceOutcome` | `"taken" \| "hard_denied" \| "soft_cap_denied" \| "soft_cap_overridden" \| "pending_approval"` |
+| `denialReason` | `string?` | Present when outcome is a denial |
+
+---
+
+## Reflection event
+
+### `reflection`
+
+Fires after the REFLECT moment completes.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `"reflection"` | |
+| `entityId` | `string` | |
+| `ledgerEntry` | `string` | The ledger summary for this wake |
+| `goalMutations` | `GoalMutation[]` | Applied mutations |
+| `nextWakeMinutes` | `number` | Reflected cadence (clamped) |
+| `nextWakeReasoning` | `string` | |
+| `degraded` | `boolean` | True if reflection fell back to defaults |

@@ -1,0 +1,215 @@
+---
+title: "Build a custom adapter"
+description: "Implement the adapter contract for a loop you own, and map it to the OpenAI SDK, Vercel AI SDK, or Mastra."
+---
+
+<Snippet file="snippets/memory-store-warning.mdx" />
+
+## The adapter contract
+
+An adapter is an object with two fields:
+
+```ts
+{
+  name: string;
+  run(input: AgentRunInput): Promise<Transcript>;
+}
+```
+
+That's the entire contract. Three concerns inside `run`:
+
+1. **Read the wake report.** `input.message` is the rendered report as a string. `input.context` is the full `WakeContext` (goals, ledger, timestamps). `input.custom` is the output of your `agentInput` callback, if you set one.
+2. **Run your agent on it.** Any loop, any framework, any call pattern.
+3. **Return a Transcript.** A list of `TranscriptEvent` entries (`model` | `tool_call`) plus an optional `finalOutput`. Reflection reads this to write the ledger entry and evolve goal scratchpads.
+
+```ts
+import { proactive } from "@refix/proactivity";
+import type { AgentRunInput, Transcript, TranscriptEvent } from "@refix/proactivity";
+
+const myAdapter = {
+  name: "my-loop",
+  async run(input: AgentRunInput): Promise<Transcript> {
+    const events: TranscriptEvent[] = [];
+
+    // Call your agent with the wake report as the opening message:
+    const result = await myAgent.complete(input.message, {
+      onToolCall: (name, args, result) => {
+        events.push({ type: "tool_call", name, args, result });
+      },
+      onModelOutput: (content) => {
+        events.push({ type: "model", content });
+      },
+    });
+
+    return { events, finalOutput: result.text };
+  },
+};
+
+const handle = proactive(myAdapter, {
+  reflection: { model: myReasoningModel },
+  goals: [/* ... */],
+  cadence: { min: "15m", max: "24h" },
+});
+```
+
+## Live narration with `observe`
+
+`input.observe` is an optional callback you can call per event to stream live narration through the `ProactiveEvent` pipeline:
+
+```ts
+run: async (input) => {
+  // Optionally call per tool call for live narration:
+  if (input.observe) {
+    input.observe({
+      type: "agent_event",
+      kind: "tool_call",
+      name: "send_email",
+      args: { userId: "u_alice" },
+    });
+  }
+  // ...
+}
+```
+
+If you don't call `input.observe`, the returned `Transcript` is still the source of truth for reflection. Live narration is optional.
+
+## Governing without tool objects
+
+When your loop doesn't have tool objects to wrap, use `governedPerform` directly:
+
+```ts
+import { governedPerform, describeGovernanceOutcome } from "@refix/proactivity";
+
+// Inside your run() body:
+const result = await governedPerform({
+  actionType: "send_email",
+  target: { userId },
+  reasoning: `Welcome email for ${userId}`,
+  perform: async () => { await mailer.send(userId, body); },
+});
+
+// Return the outcome in-band so the model can re-plan:
+const toolResult = describeGovernanceOutcome(result.governanceOutcome, result.denialReason);
+```
+
+## Framework patterns
+
+These frameworks don't have first-class adapters but fit into the adapter contract in a few lines:
+
+<Tabs>
+  <Tab title="OpenAI SDK">
+    The OpenAI SDK is stateless like the Anthropic SDK. Pattern: parse the model's structured output, then dispatch through governance.
+
+    ```ts
+    import OpenAI from "openai";
+    import { governedPerform } from "@refix/proactivity";
+
+    const openai = new OpenAI();
+    const events: TranscriptEvent[] = [];
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: input.message }],
+      tools: myTools,
+    });
+
+    for (const choice of response.choices) {
+      events.push({ type: "model", content: choice.message.content ?? "" });
+      for (const call of choice.message.tool_calls ?? []) {
+        const args = JSON.parse(call.function.arguments);
+        // For reads: call directly. For writes: governedPerform.
+        const result = await governedPerform({ actionType: call.function.name, target: args, perform: async () => execute(call) });
+        events.push({ type: "tool_call", name: call.function.name, args, result: result.governanceOutcome });
+      }
+    }
+
+    return { events };
+    ```
+  </Tab>
+  <Tab title="Vercel AI SDK">
+    Vercel AI SDK's `generateText` with tools follows the govern-the-tool pattern (the SDK calls tools for you). Wrap side-effecting tools so they route through governance:
+
+    ```ts
+    import { generateText } from "ai";
+    import { openai } from "@ai-sdk/openai";
+
+    // Wrap the tool so it calls governedPerform:
+    const governedSendEmail = {
+      description: "Send a welcome email.",
+      parameters: z.object({ userId: z.string(), body: z.string() }),
+      execute: async ({ userId, body }) => {
+        const result = await governedPerform({
+          actionType: "send_email",
+          target: { userId },
+          perform: async () => await mailer.send(userId, body),
+        });
+        return describeGovernanceOutcome(result.governanceOutcome, result.denialReason);
+      },
+    };
+
+    const { text, steps } = await generateText({
+      model: openai("gpt-4o"),
+      messages: [{ role: "user", content: input.message }],
+      tools: { send_email: governedSendEmail, list_signups: readTool },
+    });
+
+    const events: TranscriptEvent[] = steps.flatMap(step => [
+      { type: "model", content: step.text },
+      ...step.toolCalls.map(tc => ({ type: "tool_call" as const, name: tc.toolName, args: tc.args, result: String(tc.result) })),
+    ]);
+
+    return { events, finalOutput: text };
+    ```
+  </Tab>
+  <Tab title="Mastra">
+    Mastra agents expose `agent.generate()`. Pattern is identical to the Anthropic hand-rolled loop (parse → dispatch):
+
+    ```ts
+    import { governedPerform } from "@refix/proactivity";
+
+    const response = await mastraAgent.generate(input.message);
+    const events: TranscriptEvent[] = [];
+
+    for (const step of response.steps ?? []) {
+      events.push({ type: "model", content: step.text });
+      for (const action of step.actions ?? []) {
+        const result = await governedPerform({
+          actionType: action.type,
+          target: action.target,
+          reasoning: action.reasoning,
+          perform: async () => await executeAction(action),
+        });
+        events.push({ type: "tool_call", name: action.type, args: action.target, result: result.governanceOutcome });
+      }
+    }
+
+    return { events };
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  OpenAI SDK, Vercel AI SDK, and Mastra are not shipped adapters. There is no `fromOpenAI()` or `fromVercel()` import. The patterns above show how to build the adapter yourself in a few lines. No import changes needed if you already have the client.
+</Note>
+
+## `ReasoningModel` for reflection
+
+To use a model not covered by `langchainModel` or `anthropicModel`, implement `ReasoningModel`:
+
+```ts
+import type { ReasoningModel } from "@refix/proactivity";
+
+const myReasoningModel: ReasoningModel = {
+  async generate(prompt: string, jsonSchema: object): Promise<unknown> {
+    // Call your model with the prompt and constrain output to the schema.
+    // Return the parsed JSON object (not a string).
+    return await myClient.structuredOutput(prompt, jsonSchema);
+  },
+};
+```
+
+## Related
+
+- [Adapters](/integrations/adapters) — the first-class LangGraph and Anthropic adapters
+- [Governance](/concepts/governance) — `governedPerform` and outcomes
+- [Types reference](/reference/types) — `AgentRunInput`, `Transcript`, `ReasoningModel`

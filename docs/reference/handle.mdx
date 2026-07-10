@@ -1,0 +1,121 @@
+---
+title: "ProactiveHandle"
+description: "The object returned by proactive(). Controls the lifecycle of one or more entity loops."
+---
+
+```ts
+const handle = proactive(adapter, config);
+```
+
+## Methods
+
+### `handle.start(entityId)`
+
+Arm the loop for an entity. Seeds the configured goals (idempotent) and schedules the first wake after `cadence.default`.
+
+```ts
+await handle.start("acme/api");
+```
+
+Calling `start()` on an already-running entity is a no-op. Goals are re-seeded idempotently on every `start()` call, so re-deploying with updated goal config and restarting picks up the changes.
+
+---
+
+### `handle.wake(entityId)`
+
+Trigger an immediate wake outside the scheduler cycle. The entity does not need to be `start()`-ed first.
+
+```ts
+// Webhook entry point:
+await handle.wake("acme/api");
+```
+
+<Warning>
+  `wake()` on a stopped entity (where `stop()` was called) gives it exactly one look without re-arming the schedule. The loop does not resurrect. Call `start()` to restart.
+</Warning>
+
+After a `wake()`, reflection picks the next cadence normally. The loop continues.
+
+---
+
+### `handle.stop(entityId)`
+
+Set `enabled = false` in the store. Authoritative across all processes sharing the same store. The entity will not fire any more wakes until `start()` is called again.
+
+```ts
+await handle.stop("acme/api");
+```
+
+---
+
+### `handle.resume()`
+
+Re-arm every entity that should be running after a process restart. Reads the store and enqueues all entities where `enabled = true`.
+
+```ts
+// At startup, after store.migrate():
+await handle.resume();
+```
+
+Safe to call from multiple processes simultaneously. Idempotent: an entity already enqueued in the queue is not double-enqueued.
+
+---
+
+### `handle.addGoal(entityId, goal, opts?)`
+
+Add a goal at runtime, outside the config seed flow. Idempotent on the stable goal `id`.
+
+```ts
+await handle.addGoal("acme/api", {
+  title: "Watch PR #847",
+  objective: "Alert if this PR goes stale for 48h.",
+  doneCondition: "PR merged, closed, or assigned.",
+});
+
+// Optionally trigger an immediate wake:
+await handle.addGoal("acme/api", goal, { wake: true });
+```
+
+`addGoal` ensures the entity state row exists — safe to call before `start()`.
+
+`opts.wake: true` triggers an immediate `handle.wake(entityId)` after creating the goal. Useful when the goal requires immediate attention.
+
+---
+
+### `handle.completeGoal(entityId, goalId, reason?)`
+
+Complete a goal. Works on pinned goals (the pinned shield restricts reflection, not developer authority).
+
+```ts
+await handle.completeGoal("acme/api", "watch-pr-847", "PR merged");
+```
+
+Throws if:
+- The goal doesn't exist for this entity
+- The goal belongs to a different entity
+- The goal is already in a terminal state (`completed` or `archived`)
+
+---
+
+### `handle.listGoals(entityId, filter?)`
+
+Read the goal list. Passthrough to `store.listGoals`.
+
+```ts
+const goals = await handle.listGoals("acme/api");
+const active = await handle.listGoals("acme/api", { status: ["active"] });
+```
+
+---
+
+### `handle.store`
+
+The live store. Use for dashboards, custom queries, or migrating to the primitives layer without a store change.
+
+```ts
+const ticks = await handle.store.listTicks("acme/api", { limit: 20 });
+```
+
+<Note>
+  `handle.store` is your seam for observability. Query the `proactivity_*` tables for dashboards or pipe them into your analytics backend. The schema is stable and documented in [Storage](/production/storage).
+</Note>

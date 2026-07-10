@@ -1,0 +1,65 @@
+---
+title: "Memory"
+description: "What persists across wakes, where it lives, and how long-term history folds into a rolling summary."
+---
+
+The ledger is not a table. It is a composed view over three record types — tick rows, goal-tick summaries, and attempt rows. What the agent experiences as "memory" is this view rendered into the report each wake, plus each goal's `findings` scratchpad.
+
+## What persists
+
+| What | Where | How long |
+|---|---|---|
+| Goals and their `findings` scratchpads | `proactivity_goals` | Until the goal is archived |
+| Per-wake ledger entries (summaries) | `proactivity_goal_ticks.summary` | Until folded into the rolling summary |
+| Per-wake governed actions (`target → outcome`) | `proactivity_attempts` | Permanent; the audit trail |
+| Tick metadata (trigger, cadence, status) | `proactivity_ticks` | Permanent |
+| Rolling ledger summary | `proactivity_state.ledgerSummary` | Replaced each fold |
+
+The full schema for these tables is in [Storage](/production/storage).
+
+## Two kinds of memory
+
+| Memory | Scope | Set by | Contents |
+|---|---|---|---|
+| **Goal scratchpad** (`findings`) | Per-goal | Reflection | Current state of the goal, open threads, next steps |
+| **Ledger entry** | Per-wake | Reflection | What the agent observed, did, and deliberately skipped |
+
+They are complementary. The ledger is a chronological record of wakes; the scratchpad is a living summary specific to one goal. The ledger says what happened; the scratchpad says what to do next.
+
+## Recent window vs rolling summary
+
+`report.recentWakes` (default 5) controls how many past wakes appear verbatim in the wake report, newest first. Each verbatim entry carries that wake's ledger summary, every governed action, and the next-wake reasoning.
+
+Beyond the recent window, history is either absent (default) or folded into a rolling summary.
+
+```ts
+proactive(adapter, {
+  report: {
+    summarizeOlderWakes: true, // default false
+  },
+  // ...
+});
+```
+
+When `true`, after each wake the SDK checks whether wakes have aged out of the `recentWakes` window and folds them into a rolling summary using one extra call on `reflection.model`. The report then gains an **Older wakes (rolling summary)** section. Wake #500 still knows what wake #3 promised.
+
+The fold has three properties worth knowing:
+
+- **Batch-capped** at 25 wakes per fold, so an entity restarted after a long gap catches up gradually rather than in one expensive call.
+- **Marker-guarded** — `ledgerSummaryThroughTick` advances only on success. A failed fold goes to `onError`, the marker stays put, and the next wake retries.
+- **Non-fatal** — the fold runs post-wake; a fold failure does not affect the completed wake.
+
+## Querying the store
+
+The ledger is a view over the tables above. Query them directly through `handle.store`:
+
+```ts
+const goals = await handle.store.listGoals("acme/api");
+const ticks = await handle.store.listRecentTicks("acme/api", { limit: 50 });
+```
+
+## Related
+
+- [Context injection](/concepts/context-injection) — how memory is rendered into the wake report
+- [Goals](/concepts/goals) — the per-goal scratchpad
+- [Storage](/production/storage) — the full table schema

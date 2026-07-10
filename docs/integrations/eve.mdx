@@ -1,0 +1,170 @@
+---
+title: "Eve"
+description: "createEveProactivity() is built with Eve's grain: a session hook, tool factories, and a due-gate over Eve's static cron."
+---
+
+<Snippet file="snippets/memory-store-warning.mdx" />
+
+Eve is a durable-workflow runtime that owns sessions and scheduling. There is **no `proactive()` call** for Eve — the runtime grain is different. `createEveProactivity(config)` returns hook and tool factories that wire into Eve's own session and cron system.
+
+Same store, goals, reflection, and governance underneath. Different surface because Eve is different.
+
+<Warning>
+  The transcript in Eve is the agent's `finish_heartbeat` self-report plus the real governed-action audit rows from the store — not a captured execution log. Eve exposes no session transcript API. Reflection reasons over what the agent reported and what the governance ledger confirmed actually happened. This is stated plainly; the ledger rows are ground truth, the narrative is self-reported.
+</Warning>
+
+## What you get
+
+`createEveProactivity(config)` returns an `EveProactivity` object with:
+
+| Member | What it is |
+|---|---|
+| `onSessionStarted()` | Async hook body for `events["session.started"]`. Opens the tick, seeds goals, stashes serialized IDs into your `defineState` slot. |
+| `briefingTool()` | Tool definition (`get_briefing`). Call first every session. Returns `{ due, briefing }`. If `due === false`, this is not a real wake — do nothing and stop. |
+| `finishHeartbeatTool()` | Tool definition (`finish_heartbeat`). Call last, once, with a complete report of the session. Runs reflection and schedules the next wake. |
+| `governedTool(input)` | Tool definition factory. Wraps a side-effecting tool in the governance envelope. |
+| `addGoal(goal, opts?)` | Add a goal at runtime. `opts.wakeNext = true` marks the entity due so the next cron firing becomes a real wake. |
+| `completeGoal(goalId, reason?)` | Complete a goal, including pinned ones. |
+| `listGoals(filter?)` | List goals for this entity. |
+| `scheduleMarkdown(extra?)` | Returns the recommended markdown for your `schedules/` file. |
+
+## Setup
+
+<Steps>
+  <Step title="Install and configure">
+    ```bash
+    pnpm add @refix/proactivity
+    ```
+
+    Create a shared module for the proactivity instance. Eve agents are single-entity processes; set `entityId` explicitly:
+
+    ```ts
+    // agent/proactivity.ts
+    import { createEveProactivity } from "@refix/proactivity/eve";
+    import { createTestStore, memoryStore } from "@refix/proactivity";
+    import { anthropicModel } from "@refix/proactivity/anthropic";
+    import { defineState } from "eve/context";
+    import type { EveTickState } from "@refix/proactivity/eve";
+    import Anthropic from "@anthropic-ai/sdk";
+
+    const client = new Anthropic();
+
+    // The state slot must be defined with defineState — functions don't serialize,
+    // so the slot holds plain JSON ids, not live handles.
+    export const tickState = defineState<EveTickState | null>("proactivity.tick", () => null);
+
+    export const proactivity = createEveProactivity({
+      store: memoryStore(), // swap createPostgresStore in prod
+      entityId: "my-agent",
+      state: tickState,
+      reflection: { model: anthropicModel(client, "claude-haiku-4-5") },
+      goals: [
+        {
+          title: "Follow up on unanswered threads",
+          objective: "Nudge me once about conversations I've left waiting on a reply.",
+          doneCondition: "Every stale thread surfaced in a tick has been nudged once.",
+          pinned: true,
+        },
+      ],
+      cadence: { min: "30m", max: "6h" },
+    });
+    ```
+  </Step>
+
+  <Step title="Wire the session hook">
+    ```ts
+    // agent/hooks/open-tick.ts
+    import { defineHook } from "eve/hooks";
+    import { proactivity } from "../proactivity.js";
+
+    export default defineHook({
+      events: {
+        "session.started": async () => {
+          await proactivity.onSessionStarted();
+        },
+      },
+    });
+    ```
+
+    The hook runs before any model turn. It opens the tick, seeds goals, and populates the `tickState` slot with serialized IDs. If the entity is not due (Eve's cron fires on a fixed interval; only some firings are real wakes), it sets `due: false` and returns.
+  </Step>
+
+  <Step title="Add the briefing and finish tools">
+    ```ts
+    // agent/tools/get_briefing.ts
+    import { defineTool } from "eve/tools";
+    import { proactivity } from "../proactivity.js";
+
+    export default defineTool(proactivity.briefingTool());
+    ```
+
+    ```ts
+    // agent/tools/finish_heartbeat.ts
+    import { defineTool } from "eve/tools";
+    import { proactivity } from "../proactivity.js";
+
+    export default defineTool(proactivity.finishHeartbeatTool());
+    ```
+
+    Tool filenames become tool names in Eve. Save them as `tools/get_briefing.ts` and `tools/finish_heartbeat.ts`.
+  </Step>
+
+  <Step title="Add the cron schedule">
+    Create a schedule file. Use `proactivity.scheduleMarkdown()` for the recommended instruction text:
+
+    ```ts
+    // agent/schedules/proactive-wake.ts
+    import { defineSchedule } from "eve/schedules";
+    import { proactivity } from "../proactivity.js";
+
+    export default defineSchedule({
+      cron: "*/30 * * * *", // polling floor; real cadence is set by reflection
+      prompt: proactivity.scheduleMarkdown(),
+    });
+    ```
+
+    The cron is the polling floor. Eve's cron fires at the interval you set; the due-gate in `onSessionStarted` decides which firings are real wakes based on the `nextScheduledTickAt` in the store.
+
+    <Check>
+      The agent should now call `get_briefing` first every session. If `due === false`, it does nothing and stops. If `due === true`, it works and ends with `finish_heartbeat`.
+    </Check>
+  </Step>
+
+  <Step title="Wrap side-effecting tools">
+    ```ts
+    // agent/tools/send_followup_nudge.ts
+    import { defineTool } from "eve/tools";
+    import { proactivity } from "../proactivity.js";
+    import { z } from "zod";
+
+    export default defineTool(
+      proactivity.governedTool({
+        description: "Send a follow-up nudge about a conversation I've left on read.",
+        inputSchema: z.object({ threadId: z.string(), nudge: z.string() }),
+        actionType: "send_followup_nudge",
+        target: (args) => ({ threadId: args.threadId }),
+        perform: async (args) => {
+          // your actual send logic
+          console.log(`[nudge] ${args.threadId}: ${args.nudge}`);
+        },
+      }),
+    );
+    ```
+
+    The tool returns `{ governanceOutcome, result? | note? }`. If `governanceOutcome` is `hard_denied`, the model sees why and should stop retrying.
+  </Step>
+</Steps>
+
+## Why governance is rebuilt per call
+
+Eve serializes `defineState` across step boundaries. A `GovernanceHandle` holds a closure — functions don't serialize. The Eve adapter stores tick IDs (plain JSON) in the state slot and rebuilds the governance envelope per tool call from those IDs plus the shared store. Idempotency holds because it's keyed on `tickId` in the store, not in the in-memory handle.
+
+<Note>
+  Vercel's Agent Runs dashboard provides complementary observability for humans. It has no read API, so the integration doesn't consume it programmatically.
+</Note>
+
+## Related
+
+- [Governance](/concepts/governance) — the envelope `governedTool` wraps
+- [Adapters](/integrations/adapters) — the standard `proactive()` integration path
+- [Eve reference](/reference/eve) — `createEveProactivity` config and returns
