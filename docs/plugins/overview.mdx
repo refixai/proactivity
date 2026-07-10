@@ -1,0 +1,42 @@
+---
+title: "Overview"
+description: "Plugins add proactivity to an agent that already runs on another runtime — governance, durable goals, and cadence, layered on in place with no proactive() call."
+---
+
+A plugin adds proactivity to an agent that **already runs on another runtime**. It layers the governance envelope, durable goals, and cadence control onto the host's existing loop, memory, and scheduler.
+
+This is the opposite side of the [adapters](/integrations/adapters): an adapter wraps an agent *you* run with `proactive()`, which owns the wake loop. A plugin has **no `proactive()` call** — the host runtime owns sessions and scheduling, and proactivity's primitives are wired in through the host's hook, tool, and middleware system.
+
+## What's supported
+
+| | [Eve](/plugins/eve) | [OpenClaw](/plugins/openclaw) | [Hermes](/plugins/hermes) |
+|---|---|---|---|
+| Runtime | Durable-workflow runtime (Vercel) | Personal-agent runtime (OSS) | Personal-agent runtime (Nous Research) |
+| Language | TypeScript | TypeScript | Python |
+| Attaches as | Native integration (`createEveProactivity`) | Installed plugin | Installed plugin |
+| Governs | Tools you wrap with `governedTool` | Outbound messages by default, plus named tools | Named outbound tools |
+| Cadence | Reflection sets the next wake | `set_cadence` → `openclaw cron` | `set_cadence` → `hermes cron` |
+| Storage | Your `ProactivityStore` | JSON at `~/.openclaw/proactivity.json` | SQLite at `~/.hermes/proactivity.db` |
+
+<Note>
+  Eve is a **native integration** — first-party Refix code you call (`createEveProactivity`). OpenClaw and Hermes are **installed plugins** you add to those runtimes. All three share the same shape: no `proactive()` call, governance and goals layered onto a loop the host already owns.
+</Note>
+
+## Pick your runtime
+
+<CardGroup cols={3}>
+  <Card title="Eve" icon="bolt" href="/plugins/eve">
+    Session hook, tool factories, and a due-gate over Eve's cron.
+  </Card>
+  <Card title="OpenClaw" icon="plug" href="/plugins/openclaw">
+    A plugin that governs every outbound message by default.
+  </Card>
+  <Card title="Hermes" icon="python" href="/plugins/hermes">
+    A Python plugin; governance is opt-in on the tools you name.
+  </Card>
+</CardGroup>
+
+## Related
+
+- [Adapters](/integrations/adapters) — the `proactive()` path for agents you run yourself
+- [Governance](/concepts/governance) — the envelope every plugin reuses
