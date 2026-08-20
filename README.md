@@ -224,6 +224,17 @@ A few things are deliberately not configurable: reflection always runs, idempote
 
 `proactive()` is compiled from documented, individually usable primitives (a scheduler, a heartbeat, a goal store, and the governance envelope) that share one store. When the wrapper stops fitting your flow, dropping one layer down isn't a migration: same tables, same ledger, same scheduler. The primitives layer, plan/act mode, and per-framework wiring patterns are documented in [`PRIMITIVES.md`](PRIMITIVES.md), with runnable, compile-checked examples under [`examples/`](examples).
 
+## Roadmap
+
+Where this is headed. It's a statement of current intent, not a commitment or a promise to ship any item by any date — priorities move with feedback and maintainer bandwidth. *Last updated: 2026-08.*
+
+- **More first-class adapters** — dedicated subpaths for the Vercel AI SDK and the OpenAI Agents SDK (both work today via the "govern the tool" / "parse then dispatch" patterns, but aren't packaged as their own adapters yet).
+- **Pluggable long-term memory** — a recall interface so a goal's scratchpad can be backed by a vector store (pgvector, Mem0, Zep) when the rolling summary isn't enough for very long-lived agents. Memory is structured today (scratchpad + ledger + rolling summary); this makes semantic recall a swappable layer.
+- **Cost & token accounting** — per-wake spend surfaced on the event stream, with budget ceilings and OpenTelemetry export.
+- **A SQLite store** for local and edge deployments, alongside the Postgres one.
+
+Need something here sooner? [Open an issue](https://github.com/refixai/proactivity/issues) — it helps us prioritize.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
