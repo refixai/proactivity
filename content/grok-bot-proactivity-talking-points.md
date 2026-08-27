@@ -8,6 +8,8 @@ Talking points for a content piece on baking `@refix/proactivity` into Grok Bot.
 
 **Thesis:** Grok Bot gave agents a computer, a roster, and a clock. This repository is the missing envelope: a wake the Bot can reason about, memory that survives hundreds of those wakes, a pace the Bot sets itself, and side effects that cannot double-fire after a crash. Do not wrap Grok Bot in another framework. Layer this onto the loop it already owns, the same way the repo already layers onto OpenClaw, Hermes, and Eve.
 
+**Is it possible?** Yes. **Is it a weaker integration?** Yes — and that is the plugin path this repo already documents, not a special Grok Bot failure. First-class `proactive()` owns the clock, the transcript, and `governed()` on every write. A host plugin rides the host’s scheduler, cannot always intercept every side effect, and says so in an honest-limitations accordion. Grok Bot would be a fourth plugin in that family, closest to **Eve** (static cron + due-gate), a bit weaker than OpenClaw/Hermes because Grok Bot’s main work surface is **computer-use**, which has no documented tool-hook to wrap.
+
 ---
 
 ## 1. One-liners
@@ -71,8 +73,17 @@ These are from Grok Bot’s own docs, and they help the trust argument:
 - **Background routines can pause** after a long time away if the human doesn’t confirm they should keep running.
 - **Event listeners should be narrow.** “Every new message” burns usage and acts on noise.
 - **Grok Bot requires data storage** and does not support Legacy Privacy Mode.
-- **Plugins in the Grok Bot app** are connectors and packaged skills (Marketplace / Yours). Grok Bot follows Cursor plugin and MCP policy; there are no separate Grok Bot plugin controls.
+- **Plugins in the Grok Bot app** are connectors and packaged skills (Marketplace / Yours). Grok Bot follows Cursor plugin and MCP policy; there are no separate Grok Bot plugin controls. Team MCP allowlists/denylists apply. Hosted MCP tokens stay in Cursor’s backend; the computer never stores them.
 - **Grok Build’s plugin format** (skills, hooks, MCP, `plugin.json`) is a related but distinct surface. Do not claim a Grok Bot hook API that Grok Build has unless we have verified it on Grok Bot itself.
+- **No model picker.** Model choice is fully managed. That matters for `reflection.model`: you cannot point reflection at Haiku from the Grok Bot UI the way the SDK quickstart does.
+- **Audit view of Bot actions is “coming”** (teams docs). Our attempt ledger is the mechanical version of that gap.
+- **Hiding a Bot does not pause its routines.** Deleting a Bot does remove its routines; shared-computer files may remain.
+- **Duplicate copies profile, skills, routines — not conversation, learned memory, or attachments.**
+- **iPhone can pause/resume a routine; editing schedule, run history, test run, and delete require desktop.**
+- **One computer-use task per Bot screen at a time.** Connector/MCP work can still run in parallel across Bots.
+- **Recover/Update preserve durable files and logins. Reset can discard recent unsynced work.** A JSON/SQLite store in `/workspace` survives recover; it is not as safe as Postgres.
+- **Bot memory is not an authoritative source.** Their FAQ: for important decisions, check the current source. That is our briefing/`deltaCutoff` story.
+- **Linux desktop is not a Grok Bot app.** The *computer* is a managed Linux VM (non-root). The *client* is macOS/Windows/iOS.
 
 ---
 
@@ -138,7 +149,50 @@ The punchline: Grok Bot is an outstanding **host**. This repo is the **unattende
 
 ---
 
-## 5. Don’t wrap Grok Bot. Layer the envelope.
+## 5. What “weaker” actually means
+
+The repo already splits the world in two (`docs/plugins/overview.mdx`):
+
+| | Adapter (`proactive()`) | Plugin (Eve / OpenClaw / Hermes / Grok Bot) |
+|---|---|---|
+| Who owns the loop | This SDK | The host |
+| Clock | Timer or BullMQ delayed jobs; reflection re-arms the next wake | Host cron/routines; we ride it |
+| Transcript | Captured live (LangGraph callbacks, Anthropic proxy) | Often self-report + audit rows (Eve already) |
+| Side effects | Wrap the tool object | Intercept if the host has hooks; otherwise opt-in named tools |
+| Storage | Your `ProactivityStore` (Postgres in prod) | JSON/SQLite on the host, unless you bring a store |
+| `shouldWake`, `agentInput`, `observe` | First-class | You approximate them |
+
+OpenClaw and Hermes already print this as **honest limitations**: cadence is only first-class on infrastructure Refix controls; ticks may be time buckets; governance may fail open; Hermes governance is opt-in because there is no safe default outbound tool.
+
+Eve is the closest analog to Grok Bot, and the Eve source says the weaker bits out loud:
+
+1. Cron is **static**, so self-adjusting cadence is a **due-gate** on top of polling.
+2. Hooks **cannot inject** the opening message, so the agent **fetches** `get_briefing`.
+3. There is **no transcript API**, so reflection reads a self-report plus real audit rows.
+4. Governance is **rebuilt per tool call** from serialized ids, not a live in-process handle.
+
+Grok Bot adds three extra weakenings Eve/OpenClaw do not have:
+
+| Extra gap | Why it matters |
+|---|---|
+| **No documented `before_tool_call` / `message_sending` / `tool_execution` hook** | OpenClaw can govern every outbound message by default. Grok Bot plugins are connectors and packaged skills. We can govern **MCP/connector tools we wrap**. We cannot wrap “clicked Send in Gmail in the browser.” |
+| **Computer-use is the product** | Their docs prefer a connector when one exists, and fall back to the browser for everything else — including Teach-a-task (up to 10 minutes of visible computer interaction). A large share of real Grok Bot work never becomes a tool object. Governance on that path is Grok Bot approvals + Auto-review, not `governed()`. |
+| **No model picker** | `reflection.model` in the SDK is “your client, often a cheaper one.” On Grok Bot, the serving model is product-managed with failover. Reflection is either another Bot turn (same managed model, costs usage) or an MCP-side call with a key you bring (team MCP policy may block it). |
+
+So: **possible, and the same shape as plugins we already ship — weaker than `proactive()`, and weaker than OpenClaw on interception, for a documented reason.** Do not sell it as BullMQ-on-the-Bot-computer.
+
+What is *not* weaker, if we stay on connector/MCP writes:
+
+- Goal store, pinned shield, findings scratchpads
+- Idempotency claimed before `perform()` on governed tools
+- Per-tick caps and in-band denials
+- Dry-run `pending_approval` in front of Grok Bot’s approval cards
+- `acted` derived from attempt rows
+- Event routines as `handle.wake()` / due-now
+
+Their own docs already want that last mile: “Make retries idempotent where possible,” “preserve an action log,” “audit view of Bot actions is coming,” “for important decisions check the current source,” and the files guide’s split (facts / assumptions / completed / waiting approval / unresolved). That split *is* a ledger entry.
+
+## 6. Don’t wrap Grok Bot. Layer the envelope.
 
 This is the architectural talking point. Get it wrong and the piece sounds like “rewrite Grok Bot in LangGraph.”
 
@@ -165,7 +219,7 @@ That is the same grain as Eve (static cron + due-gate), OpenClaw (`set_cadence` 
 
 ---
 
-## 6. Four bake-in paths, ranked
+## 7. Four bake-in paths, ranked
 
 Ship in this order. The piece can present 1 as “you can do this today,” 2 as “the product-shaped integration,” and 3 as “the Eve analog if routines stay static.”
 
@@ -203,7 +257,7 @@ Plus interception, not name-shadowing:
 
 Store on the shared computer (`/workspace/proactivity.sqlite` or JSON), matching OpenClaw’s `~/.openclaw/proactivity.json` and Hermes’s `~/.hermes/proactivity.db`. Promote to Postgres when this is a product, not a personal Bot.
 
-**Honest limitation to state in the piece:** a workspace plugin on OpenClaw cannot call the native `scheduleSessionTurn` (hard-gated to bundled plugins), so `set_cadence` shells out to `openclaw cron add`. Expect the same class of constraint on Grok Bot: we will ride routines until there is a first-class third-party scheduling primitive. Document it the way `integrations/openclaw/README.md` already does.
+**Honest limitations to state in the piece:** a workspace plugin on OpenClaw cannot call the native `scheduleSessionTurn` (hard-gated to bundled plugins), so `set_cadence` shells out to `openclaw cron add`. Expect the same class of constraint on Grok Bot: we will ride routines until there is a first-class third-party scheduling primitive. Document it the way `integrations/openclaw/README.md` already does. Connector/MCP writes can be governed; **browser computer-use cannot**, unless Grok Bot later exposes a hook equivalent to OpenClaw’s `before_tool_call`.
 
 ### Path 3 — Eve-style due-gate over a frequent routine (most realistic if routines stay fixed)
 
@@ -226,7 +280,7 @@ Grok Bot is not a `run()` you call. It is the process. Forcing the adapter shape
 
 ---
 
-## 7. Map Grok Bot surfaces onto the four wake moments
+## 8. Map Grok Bot surfaces onto the four wake moments
 
 This is the “how it actually fits” diagram for a blog or talk.
 
@@ -286,7 +340,7 @@ Grok Bot’s 20 routine-run records are operational history, not this.
 
 ---
 
-## 8. Flagship demo (write the piece around one job)
+## 9. Flagship demo (write the piece around one job)
 
 Use **Account Health** or **Sales outbound**. Both are first-party Grok Bot use cases. Both currently end as “create a nightly / weekday routine that stops at a review list.”
 
@@ -329,7 +383,7 @@ Other Grok Bot jobs that map the same way (from [Jobs Bots are doing today](http
 
 ---
 
-## 9. Trust argument (quote them, then show the mechanical version)
+## 10. Trust argument (quote them, then show the mechanical version)
 
 Grok Bot’s [design routines for trust](https://docs.x.ai/grok-bot/skills-routines-and-automations) already lists:
 
@@ -365,7 +419,7 @@ Invariants worth naming (they are not missing knobs):
 
 ---
 
-## 10. Soundbites and lines that travel
+## 11. Soundbites and lines that travel
 
 For a talk, pull 4–5. For a thread, one per tweet.
 
@@ -382,7 +436,7 @@ For a talk, pull 4–5. For a thread, one per tweet.
 
 ---
 
-## 11. Claims to avoid
+## 12. Claims to avoid
 
 These will get the piece (or a launch) in trouble.
 
@@ -395,10 +449,11 @@ These will get the piece (or a launch) in trouble.
 - **Do not imply reflection is a second Grok.** It is one structured-output call on the customer’s model, truncating the transcript, with hostile-output validation and a pinned shield.
 - **Do not present Path 1 (skill + JSON file) as the product.** It is the foil.
 - **Do not skip cost.** Every real wake is an agent run + one reflection call. Cadence bounds and `shouldWake` are how a 15-minute due-gate does not become a 15-minute full agent. Grok Bot already warns that broad listeners burn usage.
+- **Do not claim we govern browser clicks.** Connector/MCP tools we wrap, yes. Computer-use (Teach-a-task, Gmail in the browser) stays on Grok Bot approvals and Auto-review.
 
 ---
 
-## 12. Suggested shapes for the piece
+## 13. Suggested shapes for the piece
 
 ### Blog (~1,200–1,800 words)
 
@@ -436,7 +491,7 @@ These will get the piece (or a launch) in trouble.
 
 ---
 
-## 13. What we would build next (if this brief becomes a PR to the SDK)
+## 14. What we would build next (if this brief becomes a PR to the SDK)
 
 Not required for the content piece. Useful if the article’s CTA is “we’re adding a Grok Bot plugin.”
 
@@ -456,19 +511,29 @@ Grok Bot (SpaceXAI), retrieved 27 Aug 2026:
 - [Introducing Grok Bot](https://x.ai/news/introducing-grok-bot) (11 Aug 2026)
 - [Grok Bot is now included with more plans](https://x.ai/news/grok-bot-more-plans) (26 Aug 2026)
 - [Overview](https://docs.x.ai/grok-bot/overview)
+- [Get started](https://docs.x.ai/grok-bot/get-started)
+- [Bots](https://docs.x.ai/grok-bot/bots)
 - [Skills and routines](https://docs.x.ai/grok-bot/skills-routines-and-automations)
 - [Use cases](https://docs.x.ai/grok-bot/use-cases)
 - [Computer and apps](https://docs.x.ai/grok-bot/computer-and-apps)
-- [Approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy)
+- [Files and results](https://docs.x.ai/grok-bot/files-and-results)
 - [Chat and collaboration](https://docs.x.ai/grok-bot/chat-and-collaboration)
+- [Approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy)
 - [Settings and notifications](https://docs.x.ai/grok-bot/settings-and-notifications)
 - [Teams and enterprises](https://docs.x.ai/grok-bot/teams-and-enterprises)
+- [FAQ](https://docs.x.ai/grok-bot/faq)
+- [Mobile](https://docs.x.ai/grok-bot/mobile)
+- [Troubleshooting](https://docs.x.ai/grok-bot/troubleshooting)
 - [xAI plugin marketplace](https://github.com/xai-org/plugin-marketplace) (Grok Build catalog format; do not treat as Grok Bot app API without verification)
+
+Grok Bot docs corpus on this date: 14 pages under `/grok-bot/` in [docs.x.ai/llms.txt](https://docs.x.ai/llms.txt) (overview through troubleshooting, including faq and mobile). First pass of this brief missed get-started, bots (full), files-and-results, faq, mobile, and troubleshooting; those are now in.
 
 This repository:
 
 - `README.md`, `PRIMITIVES.md`
 - `docs/concepts/{architecture,scheduling,governance,reflection,goals,memory,context-injection}.mdx`
 - `docs/plugins/{overview,openclaw,hermes,eve}.mdx`
-- `docs/guides/{webhook-wakes,cost-control}.mdx`
+- `docs/guides/{webhook-wakes,cost-control,primitives}.mdx`
+- `docs/integrations/adapters.mdx`
+- `src/eve/index.ts` (due-gate, no inject, no transcript API)
 - `integrations/openclaw/README.md`, `integrations/hermes/README.md`
