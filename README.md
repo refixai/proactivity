@@ -24,6 +24,8 @@ The TypeScript SDK for proactive agents: durable wake scheduling, cross-wake goa
 
 Works with LangGraph, the Anthropic SDK, Eve, OpenClaw, and Hermes, or any loop you own.
 
+Proactivity is built by [Refix](https://www.refix.ai/), the AI product manager for teams that want to investigate and improve the metrics that matter.
+
 ## The problem
 
 LangGraph, CrewAI, and friends give you a reasoning loop: you call it, it thinks, it returns. That's a reactive agent. A proactive one wakes on its own, notices what changed, pursues goals across wakes, and sets its own pace.
