@@ -26,7 +26,7 @@ Works with LangGraph, the Anthropic SDK, Eve, OpenClaw, and Hermes, or any loop 
 
 ## About Refix
 
-[Refix](https://www.refix.ai/) is an AI product manager for app and subscription teams. Give it a business goal, such as reducing churn or recovering failed renewals, and it investigates the product, revenue, and support signals behind the metric. It brings back the evidence, the likely constraint, and a next move for the team to review.
+[Refix](https://www.refix.ai/) is an AI product manager for teams. Give it a business goal, such as reducing churn or recovering failed renewals, and it investigates the product, revenue, and support signals behind the metric. It brings back the evidence, the likely constraint, and a next move for the team to review.
 
 ## The problem
 
